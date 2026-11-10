@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -33,43 +35,33 @@ var (
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
 	SchemeBuilder = &scheme.Builder{GroupVersion: SchemeGroupVersion}
-	AddToScheme   = SchemeBuilder.AddToScheme
-)
-
-// ExternalSecret type metadata.
-var (
-	ExtSecretKind             = reflect.TypeOf(ExternalSecret{}).Name()
-	ExtSecretGroupKind        = schema.GroupKind{Group: Group, Kind: ExtSecretKind}.String()
-	ExtSecretKindAPIVersion   = ExtSecretKind + "." + SchemeGroupVersion.String()
-	ExtSecretGroupVersionKind = SchemeGroupVersion.WithKind(ExtSecretKind)
-)
-
-// SecretStore type metadata.
-var (
-	SecretStoreKind             = reflect.TypeOf(SecretStore{}).Name()
-	SecretStoreGroupKind        = schema.GroupKind{Group: Group, Kind: SecretStoreKind}.String()
-	SecretStoreKindAPIVersion   = SecretStoreKind + "." + SchemeGroupVersion.String()
-	SecretStoreGroupVersionKind = SchemeGroupVersion.WithKind(SecretStoreKind)
-)
-
-// ClusterSecretStore type metadata.
-var (
-	ClusterSecretStoreKind             = reflect.TypeOf(ClusterSecretStore{}).Name()
-	ClusterSecretStoreGroupKind        = schema.GroupKind{Group: Group, Kind: ClusterSecretStoreKind}.String()
-	ClusterSecretStoreKindAPIVersion   = ClusterSecretStoreKind + "." + SchemeGroupVersion.String()
-	ClusterSecretStoreGroupVersionKind = SchemeGroupVersion.WithKind(ClusterSecretStoreKind)
+	// AddToScheme adds the types in this group-version to the given scheme.
+	AddToScheme = SchemeBuilder.AddToScheme
 )
 
 var (
-	PushSecretKind             = reflect.TypeOf(PushSecret{}).Name()
-	PushSecretGroupKind        = schema.GroupKind{Group: Group, Kind: PushSecretKind}.String()
-	PushSecretKindAPIVersion   = PushSecretKind + "." + SchemeGroupVersion.String()
+	// PushSecretKind is the kind name used for PushSecret resources.
+	PushSecretKind = reflect.TypeFor[PushSecret]().Name()
+	// PushSecretGroupKind is the group/kind used for PushSecret resources.
+	PushSecretGroupKind = schema.GroupKind{Group: Group, Kind: PushSecretKind}.String()
+	// PushSecretKindAPIVersion is the kind/apiVersion used for PushSecret resources.
+	PushSecretKindAPIVersion = PushSecretKind + "." + SchemeGroupVersion.String()
+	// PushSecretGroupVersionKind is the GroupVersionKind for PushSecret resources.
 	PushSecretGroupVersionKind = SchemeGroupVersion.WithKind(PushSecretKind)
 )
 
+var (
+	// ClusterPushSecretKind is the kind name used for ClusterPushSecret resources.
+	ClusterPushSecretKind = reflect.TypeFor[ClusterPushSecret]().Name()
+	// ClusterPushSecretGroupKind is the group/kind used for ClusterPushSecret resources.
+	ClusterPushSecretGroupKind = schema.GroupKind{Group: Group, Kind: ClusterPushSecretKind}.String()
+	// ClusterPushSecretKindAPIVersion is the kind/apiVersion used for ClusterPushSecret resources.
+	ClusterPushSecretKindAPIVersion = ClusterPushSecretKind + "." + SchemeGroupVersion.String()
+	// ClusterPushSecretGroupVersionKind is the GroupVersionKind for ClusterPushSecret resources.
+	ClusterPushSecretGroupVersionKind = SchemeGroupVersion.WithKind(ClusterPushSecretKind)
+)
+
 func init() {
-	SchemeBuilder.Register(&ExternalSecret{}, &ExternalSecretList{})
-	SchemeBuilder.Register(&SecretStore{}, &SecretStoreList{})
-	SchemeBuilder.Register(&ClusterSecretStore{}, &ClusterSecretStoreList{})
 	SchemeBuilder.Register(&PushSecret{}, &PushSecretList{})
+	SchemeBuilder.Register(&ClusterPushSecret{}, &ClusterPushSecretList{})
 }

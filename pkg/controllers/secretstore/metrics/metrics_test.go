@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,9 +22,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	esapi "github.com/external-secrets/external-secrets/apis/externalsecrets/v1beta1"
+	esapi "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
 	"github.com/external-secrets/external-secrets/pkg/controllers/metrics"
 )
 
@@ -111,10 +112,8 @@ func TestUpdateStatusCondition(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
 			ss := &esapi.SecretStore{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      name,
-					Namespace: namespace,
-				},
+				Name:      name,
+				Namespace: namespace,
 			}
 
 			gaugeVec := prometheus.NewGaugeVec(prometheus.GaugeOpts{

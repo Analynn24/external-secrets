@@ -113,6 +113,7 @@ We support the following secret types of [IBM Secrets Manager](https://cloud.ibm
 * `public_cert`
 * `private_cert`
 * `kv`
+* `custom_credentials`
 
 To define the type of secret you would like to sync you need to prefix the secret id with the desired type. If the secret type is not specified it is defaulted to `arbitrary`:
 
@@ -149,6 +150,14 @@ The behavior for the different secret types is as following:
 * `dataFrom` retrieves a string from secrets manager and tries to parse it as JSON object setting the key:values pairs in resulting Kubernetes secret if successful. It could be either used with the methods
   * `Extract` to extract multiple key/value pairs from one secret (with optional `property` field being supported as well)
   * `Find` to find secrets based on tags or regular expressions and allows finding multiple external secrets and map them into a single Kubernetes secret
+
+#### custom_credentials
+* An optional `property` field can be set to `remoteRef` to select requested key from the Custom Credentials secret. If not set, the entire secret will be returned
+* `dataFrom` retrieves a string from secrets manager and tries to parse it as JSON object setting the key:values pairs in resulting Kubernetes secret if successful. It could be either used with the methods
+  * `Extract` to extract multiple key/value pairs from one secret (with optional `property` field being supported as well)
+  * `Find` to find secrets based on tags or regular expressions and allows finding multiple external secrets and map them into a single Kubernetes secret
+
+
 
 ```json
 {
@@ -245,11 +254,12 @@ kubectl get secret secret-to-be-created -n <namespace> | -o jsonpath='{.data.tes
 ```
 
 ### Populating the Kubernetes secret with metadata from IBM Secrets Manager Provider
-ESO can add metadata while creating or updating a Kubernetes secret to be reflected in its labels or annotations. The metadata could be any of the fields that are supported and returned in the response by IBM Secrets Manager.
+ESO can add metadata while creating or updating a Kubernetes secret to be reflected in its labels or annotations. The metadata could be any of the fields that are supported and returned in the response by IBM Secrets Manager. Optional metadata fields, such as a private certificate's `issuer`, are omitted when IBM Secrets Manager does not return them.
 
 In order for the user to opt in to adding metadata to secret, an existing optional field `spec.dataFrom.extract.metadataPolicy` can be set to `Fetch`, its default value being `None`. In addition to this, templating provided be ESO can be leveraged to specify the key-value pairs of the resultant secrets' labels and annotation.
 
 In order for the required metadata to be populated in the Kubernetes secret, combination of below should be provided in the External Secrets resource:
+
 1. The required metadata should be specified under `template.metadata.labels` or `template.metadata.annotations`.
 2. The required secret data should be specified under `template.data`.
 3. The spec.dataFrom.extract should be specified with details of the Secrets Manager secret with `spec.dataFrom.extract.metadataPolicy` set to `Fetch`.

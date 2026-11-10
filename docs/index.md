@@ -1,3 +1,10 @@
+# [Sponsored by](https://opencollective.com/external-secrets-org)
+
+[![Roche](./pictures/Roche_logo_blue_200px.png){ style="height: 54px" }](https://www.roche.com/)
+[![cs-logo](./pictures/cs_logo.png){ style="height: 54px" }](https://container-solutions.com)
+[![Form3](./pictures/form3_logo.png){ style="height: 54px" }](https://www.form3.tech/)
+[![Infisical](./pictures/infisical_logo.png){ style="height: 54px" }](https://infisical.com/)
+
 # Introduction
 
 ![high-level](./pictures/diagrams-high-level-simple.png)
@@ -7,7 +14,7 @@ secret management systems like [AWS Secrets
 Manager](https://aws.amazon.com/secrets-manager/), [HashiCorp
 Vault](https://www.vaultproject.io/), [Google Secrets
 Manager](https://cloud.google.com/secret-manager), [Azure Key
-Vault](https://azure.microsoft.com/en-us/services/key-vault/), [IBM Cloud Secrets Manager](https://www.ibm.com/cloud/secrets-manager), [CyberArk Conjur](https://www.conjur.org) and many more. The
+Vault](https://azure.microsoft.com/en-us/services/key-vault/), [IBM Cloud Secrets Manager](https://www.ibm.com/cloud/secrets-manager), [CyberArk Secrets Manager](https://www.cyberark.com/products/secrets-management/), [Pulumi ESC](https://www.pulumi.com/product/esc/) and many more. The
 operator reads information from external APIs and automatically injects the
 values into a [Kubernetes
 Secret](https://kubernetes.io/docs/concepts/configuration/secret/).
@@ -46,12 +53,13 @@ How to get involved:
 - [Contributing Process](contributing/process.md)
 - [Twitter](https://twitter.com/ExtSecretsOptr)
 
-### Kicked off by
+### Special thanks
+
+This project was kicked off by
 
 ![godaddy-logo](./pictures/godaddy_logo.png)
 
-### Sponsored by
+It was also maintained and developed by the following companies:
 
-![cs-logo](./pictures/cs_logo.png)
-![Form3](./pictures/form3_logo.png)
+![External Secrets inc.](./pictures/ESI_Logo.svg)
 ![Pento](./pictures/pento_logo.png)

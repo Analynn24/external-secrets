@@ -18,7 +18,7 @@ For cluster-wide resources like `ClusterSecretStore` and `ClusterExternalSecret`
 Utilize the ClusterSecretStore resource to define specific match conditions using `namespaceSelector` or an explicit namespaces list. This restricts the usage of the `ClusterSecretStore` to a predetermined list of namespaces or a namespace that matches a predefined label. Here's an example:
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: fake
@@ -29,25 +29,46 @@ spec:
           app: frontend
 ```
 
-### 3. Selectively Disable Reconciliation of Cluster-Wide Resources
+### 3. Selectively Disable Reconciliation of Resources
 
-ESO allows you to selectively disable the reconciliation of cluster-wide resources such as `ClusterSecretStore`, `ClusterExternalSecret`, and `PushSecret`. You can disable the installation of CRDs in the Helm chart or disable reconciliation in the core-controller using the following options:
+ESO allows you to selectively disable the reconciliation of resources. You can disable reconciliation for:
 
-To disable CRD installation:
+- **Cluster-wide resources**: `ClusterSecretStore`, `ClusterExternalSecret`
+- **Namespaced resources**: `SecretStore`, `PushSecret`
+
+You can disable the installation of CRDs and reconciliation in the Helm chart, or disable reconciliation in the core controller.
+
+To disable reconciliation in the Helm chart:
 
 ```yaml
-# disable cluster-wide resources & push secret
+processClusterExternalSecret: false
+processClusterStore: false
+processPushSecret: false
+processSecretStore: false
+```
+
+To disable CRD installation in the Helm chart:
+
+```yaml
 crds:
   createClusterExternalSecret: false
   createClusterSecretStore: false
+  createSecretStore: false
   createPushSecret: false
 ```
 
-To disable reconciliation in the core-controller:
+**Warning:** Disabling the `SecretStore` CRD will prevent ExternalSecrets from referencing namespaced SecretStores. Only use this if you exclusively use ClusterSecretStore.
+
+Note that disabling CRD installation for a resource does not automatically disable its reconciliation.
+The core controller will issue error logs if the CRD is not installed but the reconciliation is not disabled.
+
+To disable reconciliation in the core controller, set the following flags:
 
 ```
---enable-cluster-external-secret-reconciler
---enable-cluster-store-reconciler
+--enable-cluster-external-secret-reconciler=false
+--enable-cluster-store-reconciler=false
+--enable-secret-store-reconciler=false
+--enable-push-secret-reconciler=false
 ```
 
 ### 4. Implement Namespace-Scoped Installation
@@ -62,6 +83,26 @@ scopedRBAC: true
 # Specify the namespace where external secrets should be reconciled
 scopedNamespace: my-namespace
 ```
+
+### 5. Restrict Webhook TLS Ciphers
+
+Consider installing ESO restricting webhook ciphers. Use the following Helm values to scope webhook for specific TLS ciphers:
+```yaml
+webhook:
+  extraArgs:
+    tls-ciphers: "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
+```
+### 6. Harden the Helm Chart
+
+The provided Helm chart is designed for ease of use and may not meet your organization's specific security requirements out-of-the-box. It is crucial to review the default Helm chart values and harden the configuration. Any misconfiguration caused by using the provided helm charts is not covered by our support policy - even if it leads to a security incident.
+
+Here are some examples of how you can harden the Helm chart:
+
+* **Scope RBAC Permissions**: The default chart grants permissions to create service account tokens for any service account. You can disable this by setting `rbac.serviceAccountTokenCreate: false`. When disabled, you must grant ESO token creation for specific ServiceAccounts via dedicated Role/RoleBinding with a `resourceNames` constraint. This limits the operator's ability to impersonate other service accounts.
+
+* **Use Tightly Scoped Deployments**: If you don't need certain features, disable them. For example, you can prevent the injection of sidecar containers by using a custom appArmor profile, or an admission controller like Kyverno to enforce restrictions on your deployment.
+
+* **Use it as a Dependency**: Instead of deploying the chart directly, you can use it as a dependency in your own Helm chart. This allows you to extend its functionality and layer on your own security controls, such as `NetworkPolicies`, custom `RBAC` roles, and other security mechanisms that are specific to your environment.
 
 ## Pod Security
 
@@ -83,6 +124,45 @@ To ensure a secure RBAC configuration, consider the following checklist:
 * If necessary, deploy ESO with scoped RBAC or within a specific namespace.
 
 By carefully managing RBAC permissions and scoping the External Secrets Operator appropriately, you can enhance the security of your Kubernetes cluster.
+
+### Scoping ServiceAccount Token Creation
+
+By default, the ESO controller Role/ClusterRole includes a blanket `serviceaccounts/token: create` permission. This permission is necessary for authentication methods that rely on `serviceAccountRef` — such as Vault Kubernetes auth or Conjur JWT auth — where ESO creates a short-lived token for the referenced ServiceAccount and uses it to authenticate with the external secret provider.
+
+However, this means ESO can create tokens for *any* ServiceAccount within its scope. If the ESO service account is compromised, an attacker could leverage this permission to create tokens for other ServiceAccounts in the cluster (or in the namespace, when using scoped RBAC), effectively impersonating them and escalating privileges beyond ESO's intended scope.
+
+To mitigate this risk, you can set `rbac.serviceAccountTokenCreate: false` in the Helm chart values. This removes the blanket permission from ESO's Role/ClusterRole entirely.
+
+When this permission is disabled, you must explicitly delegate token creation to ESO on a per-ServiceAccount basis. For each ServiceAccount referenced in a SecretStore's `serviceAccountRef`, create a Role and RoleBinding that grants ESO token creation scoped to that specific ServiceAccount using the `resourceNames` constraint:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eso-token-<sa-name>
+  namespace: <namespace>
+rules:
+  - apiGroups: ['']
+    resources: ['serviceaccounts/token']
+    resourceNames: ['<sa-name>']
+    verbs: ['create']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eso-token-<sa-name>
+  namespace: <namespace>
+subjects:
+  - kind: ServiceAccount
+    name: <eso-service-account>
+    namespace: <eso-namespace>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: eso-token-<sa-name>
+```
+
+With this configuration, ESO can only create tokens for ServiceAccounts that have been explicitly granted by the cluster administrator. This follows the principle of least privilege and ensures that a compromised ESO instance cannot be used to impersonate arbitrary ServiceAccounts.
 
 ## Network Traffic and Security
 

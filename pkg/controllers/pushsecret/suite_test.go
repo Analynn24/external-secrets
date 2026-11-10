@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,20 +22,24 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
 	esv1alpha1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1alpha1"
-	esv1beta1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1beta1"
+	genv1alpha1 "github.com/external-secrets/external-secrets/apis/generators/v1alpha1"
+	ctrlcommon "github.com/external-secrets/external-secrets/pkg/controllers/common"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
@@ -67,9 +73,11 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 	Expect(cfg).ToNot(BeNil())
 
-	err = esv1beta1.AddToScheme(scheme.Scheme)
+	err = esv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 	err = esv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = genv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -87,11 +95,16 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&Reconciler{
-		Client:          k8sClient,
-		Scheme:          k8sManager.GetScheme(),
-		Log:             ctrl.Log.WithName("controllers").WithName("ExternalSecrets"),
-		RequeueInterval: time.Second,
-	}).SetupWithManager(k8sManager)
+		Client:                    k8sClient,
+		Scheme:                    k8sManager.GetScheme(),
+		Log:                       ctrl.Log.WithName("controllers").WithName("PushSecret"),
+		RestConfig:                cfg,
+		RequeueInterval:           time.Second,
+		ClusterSecretStoreEnabled: true,
+	}).SetupWithManager(ctx, k8sManager, controller.Options{
+		MaxConcurrentReconciles: 1,
+		RateLimiter:             ctrlcommon.BuildRateLimiter(),
+	})
 	Expect(err).ToNot(HaveOccurred())
 
 	go func() {

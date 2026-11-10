@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,18 +20,20 @@ import (
 	esmeta "github.com/external-secrets/external-secrets/apis/meta/v1"
 )
 
+// VaultKVStoreVersion defines the version of the KV store in Vault.
 type VaultKVStoreVersion string
 
 const (
+	// VaultKVStoreV1 represents version 1 of the Vault KV store.
 	VaultKVStoreV1 VaultKVStoreVersion = "v1"
+	// VaultKVStoreV2 represents version 2 of the Vault KV store.
 	VaultKVStoreV2 VaultKVStoreVersion = "v2"
 )
 
-// Configures an store to sync secrets using a HashiCorp Vault
-// KV backend.
+// VaultProvider configures a store to sync secrets using a HashiCorp Vault KV backend.
 type VaultProvider struct {
 	// Auth configures how secret-manager authenticates with the Vault server.
-	Auth VaultAuth `json:"auth"`
+	Auth *VaultAuth `json:"auth,omitempty"`
 
 	// Server is the connection address for the Vault server, e.g: "https://vault.example.com:8200".
 	Server string `json:"server"`
@@ -86,6 +90,10 @@ type VaultProvider struct {
 	// https://www.vaultproject.io/docs/configuration/replication#allow_forwarding_via_header
 	// +optional
 	ForwardInconsistent bool `json:"forwardInconsistent,omitempty"`
+
+	// Headers to be added in Vault request
+	// +optional
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // VaultClientTLS is the configuration used for client side related TLS communication,
@@ -94,18 +102,28 @@ type VaultClientTLS struct {
 	// CertSecretRef is a certificate added to the transport layer
 	// when communicating with the Vault server.
 	// If no key for the Secret is specified, external-secret will default to 'tls.crt'.
+	// +optional
 	CertSecretRef *esmeta.SecretKeySelector `json:"certSecretRef,omitempty"`
 
 	// KeySecretRef to a key in a Secret resource containing client private key
 	// added to the transport layer when communicating with the Vault server.
 	// If no key for the Secret is specified, external-secret will default to 'tls.key'.
+	// +optional
 	KeySecretRef *esmeta.SecretKeySelector `json:"keySecretRef,omitempty"`
 }
 
 // VaultAuth is the configuration used to authenticate with a Vault server.
 // Only one of `tokenSecretRef`, `appRole`,  `kubernetes`, `ldap`, `userPass`, `jwt` or `cert`
-// can be specified.
+// can be specified. A namespace to authenticate against can optionally be specified.
 type VaultAuth struct {
+	// Name of the vault namespace to authenticate to. This can be different than the namespace your secret is in.
+	// Namespaces is a set of features within Vault Enterprise that allows
+	// Vault environments to support Secure Multi-tenancy. e.g: "ns1".
+	// More about namespaces can be found here https://www.vaultproject.io/docs/enterprise/namespaces
+	// This will default to Vault.Namespace field if set, or empty otherwise
+	// +optional
+	Namespace *string `json:"namespace,omitempty"`
+
 	// TokenSecretRef authenticates with Vault by presenting a token.
 	// +optional
 	TokenSecretRef *esmeta.SecretKeySelector `json:"tokenSecretRef,omitempty"`
@@ -172,8 +190,7 @@ type VaultAppRole struct {
 	SecretRef esmeta.SecretKeySelector `json:"secretRef"`
 }
 
-// Authenticate against Vault using a Kubernetes ServiceAccount token stored in
-// a Secret.
+// VaultKubernetesAuth authenticates against Vault using a Kubernetes ServiceAccount token stored in a Secret.
 type VaultKubernetesAuth struct {
 	// Path where the Kubernetes authentication backend is mounted in Vault, e.g:
 	// "kubernetes"
@@ -207,13 +224,14 @@ type VaultLdapAuth struct {
 	// +kubebuilder:default=ldap
 	Path string `json:"path"`
 
-	// Username is a LDAP user name used to authenticate using the LDAP Vault
+	// Username is an LDAP username used to authenticate using the LDAP Vault
 	// authentication method
 	Username string `json:"username"`
 
 	// SecretRef to a key in a Secret resource containing password for the LDAP
 	// user used to authenticate with Vault using the LDAP authentication
 	// method
+	// +optional
 	SecretRef esmeta.SecretKeySelector `json:"secretRef,omitempty"`
 }
 
@@ -227,24 +245,27 @@ type VaultAwsAuth struct {
 	JWTAuth *VaultAwsJWTAuth `json:"jwt,omitempty"`
 }
 
-// VaultAWSAuthSecretRef holds secret references for AWS credentials
+// VaultAwsAuthSecretRef holds secret references for AWS credentials
 // both AccessKeyID and SecretAccessKey must be defined in order to properly authenticate.
 type VaultAwsAuthSecretRef struct {
 	// The AccessKeyID is used for authentication
+	// +optional
 	AccessKeyID esmeta.SecretKeySelector `json:"accessKeyIDSecretRef,omitempty"`
 
 	// The SecretAccessKey is used for authentication
+	// +optional
 	SecretAccessKey esmeta.SecretKeySelector `json:"secretAccessKeySecretRef,omitempty"`
 
 	// The SessionToken used for authentication
 	// This must be defined if AccessKeyID and SecretAccessKey are temporary credentials
 	// see: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_use-resources.html
-	// +Optional
+	// +optional
 	SessionToken *esmeta.SecretKeySelector `json:"sessionTokenSecretRef,omitempty"`
 }
 
-// Authenticate against AWS using service account tokens.
+// VaultAwsJWTAuth Authenticate against AWS using service account tokens.
 type VaultAwsJWTAuth struct {
+	// +optional
 	ServiceAccountRef *esmeta.ServiceAccountSelector `json:"serviceAccountRef,omitempty"`
 }
 
@@ -257,6 +278,7 @@ type VaultKubernetesServiceAccountTokenAuth struct {
 	// Optional audiences field that will be used to request a temporary Kubernetes service
 	// account token for the service account referenced by `serviceAccountRef`.
 	// Defaults to a single audience `vault` it not specified.
+	//
 	// Deprecated: use serviceAccountRef.Audiences instead
 	// +optional
 	Audiences *[]string `json:"audiences,omitempty"`
@@ -264,6 +286,7 @@ type VaultKubernetesServiceAccountTokenAuth struct {
 	// Optional expiration time in seconds that will be used to request a temporary
 	// Kubernetes service account token for the service account referenced by
 	// `serviceAccountRef`.
+	//
 	// Deprecated: this will be removed in the future.
 	// Defaults to 10 minutes.
 	// +optional
@@ -295,7 +318,7 @@ type VaultJwtAuth struct {
 	KubernetesServiceAccountToken *VaultKubernetesServiceAccountTokenAuth `json:"kubernetesServiceAccountToken,omitempty"`
 }
 
-// VaultJwtAuth authenticates with Vault using the JWT/OIDC authentication
+// VaultCertAuth authenticates with Vault using the JWT/OIDC authentication
 // method, with the role name and token stored in a Kubernetes Secret resource.
 type VaultCertAuth struct {
 	// ClientCert is a certificate to authenticate using the Cert Vault
@@ -305,23 +328,27 @@ type VaultCertAuth struct {
 
 	// SecretRef to a key in a Secret resource containing client private key to
 	// authenticate with Vault using the Cert authentication method
+	// +optional
 	SecretRef esmeta.SecretKeySelector `json:"secretRef,omitempty"`
 }
 
 // VaultIamAuth authenticates with Vault using the Vault's AWS IAM authentication method. Refer: https://developer.hashicorp.com/vault/docs/auth/aws
 type VaultIamAuth struct {
-
 	// Path where the AWS auth method is enabled in Vault, e.g: "aws"
+	// +optional
 	Path string `json:"path,omitempty"`
 	// AWS region
+	// +optional
 	Region string `json:"region,omitempty"`
 	// This is the AWS role to be assumed before talking to vault
+	// +optional
 	AWSIAMRole string `json:"role,omitempty"`
 	// Vault Role. In vault, a role describes an identity with a set of permissions, groups, or policies you want to attach a user of the secrets engine
 	Role string `json:"vaultRole"`
 	// AWS External ID set on assumed IAM roles
 	ExternalID string `json:"externalID,omitempty"`
 	// X-Vault-AWS-IAM-Server-ID is an additional header used by Vault IAM auth method to mitigate against different types of replay attacks. More details here: https://developer.hashicorp.com/vault/docs/auth/aws
+	// +optional
 	VaultAWSIAMServerID string `json:"vaultAwsIamServerID,omitempty"`
 	// Specify credentials in a Secret object
 	// +optional
@@ -335,16 +362,17 @@ type VaultIamAuth struct {
 // with the username and password stored in a Kubernetes Secret resource.
 type VaultUserPassAuth struct {
 	// Path where the UserPassword authentication backend is mounted
-	// in Vault, e.g: "user"
-	// +kubebuilder:default=user
+	// in Vault, e.g: "userpass"
+	// +kubebuilder:default=userpass
 	Path string `json:"path"`
 
-	// Username is a user name used to authenticate using the UserPass Vault
+	// Username is a username used to authenticate using the UserPass Vault
 	// authentication method
 	Username string `json:"username"`
 
 	// SecretRef to a key in a Secret resource containing password for the
 	// user used to authenticate with Vault using the UserPass authentication
 	// method
+	// +optional
 	SecretRef esmeta.SecretKeySelector `json:"secretRef,omitempty"`
 }

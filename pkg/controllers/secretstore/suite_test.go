@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,10 +19,9 @@ package secretstore
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,10 +32,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	esapi "github.com/external-secrets/external-secrets/apis/externalsecrets/v1beta1"
+	esapi "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
+	esv1alpha1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1alpha1"
+	ctrlcommon "github.com/external-secrets/external-secrets/pkg/controllers/common"
 	ctrlmetrics "github.com/external-secrets/external-secrets/pkg/controllers/metrics"
 	"github.com/external-secrets/external-secrets/pkg/controllers/secretstore/cssmetrics"
 	"github.com/external-secrets/external-secrets/pkg/controllers/secretstore/ssmetrics"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var cfg *rest.Config
@@ -67,6 +73,9 @@ var _ = BeforeSuite(func() {
 	err = esapi.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = esv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
 		Metrics: server.Options{
@@ -75,24 +84,57 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
-	Expect(err).ToNot(HaveOccurred())
+	k8sClient = k8sManager.GetClient()
 	Expect(k8sClient).ToNot(BeNil())
 
 	err = (&StoreReconciler{
-		Client:          k8sClient,
-		Scheme:          k8sManager.GetScheme(),
-		Log:             ctrl.Log.WithName("controllers").WithName("SecretStore"),
-		ControllerClass: defaultControllerClass,
-	}).SetupWithManager(k8sManager, controller.Options{})
+		Client:            k8sManager.GetClient(),
+		Scheme:            k8sManager.GetScheme(),
+		Log:               ctrl.Log.WithName("controllers").WithName("SecretStore"),
+		ControllerClass:   defaultControllerClass,
+		PushSecretEnabled: true, // enable PushSecret feature for testing
+	}).SetupWithManager(k8sManager, controller.Options{
+		MaxConcurrentReconciles: 1,
+		RateLimiter:             ctrlcommon.BuildRateLimiter(),
+	})
+	Expect(err).ToNot(HaveOccurred())
+
+	// Index PushSecret status.syncedPushSecrets to find all stores that have synced a specific PushSecret.
+	err = k8sManager.GetFieldIndexer().IndexField(context.Background(), &esv1alpha1.PushSecret{}, "status.syncedPushSecrets", func(obj client.Object) []string {
+		ps := obj.(*esv1alpha1.PushSecret)
+		var storeNames []string
+		if ps.Spec.DeletionPolicy != esv1alpha1.PushSecretDeletionPolicyDelete {
+			return nil
+		}
+		for storeKey := range ps.Status.SyncedPushSecrets {
+			if strings.Contains(storeKey, "/") {
+				parts := strings.SplitN(storeKey, "/", 2)
+				if len(parts) == 2 {
+					storeNames = append(storeNames, parts[1])
+				}
+			}
+		}
+		return storeNames
+	})
+	Expect(err).ToNot(HaveOccurred())
+
+	// Index PushSecret spec.deletionPolicy to find all PushSecrets with deletionPolicy: Delete.
+	err = k8sManager.GetFieldIndexer().IndexField(context.Background(), &esv1alpha1.PushSecret{}, "spec.deletionPolicy", func(obj client.Object) []string {
+		ps := obj.(*esv1alpha1.PushSecret)
+		return []string{string(ps.Spec.DeletionPolicy)}
+	})
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&ClusterStoreReconciler{
-		Client:          k8sClient,
-		Scheme:          k8sManager.GetScheme(),
-		ControllerClass: defaultControllerClass,
-		Log:             ctrl.Log.WithName("controllers").WithName("ClusterSecretStore"),
-	}).SetupWithManager(k8sManager)
+		Client:            k8sManager.GetClient(),
+		Scheme:            k8sManager.GetScheme(),
+		ControllerClass:   defaultControllerClass,
+		Log:               ctrl.Log.WithName("controllers").WithName("ClusterSecretStore"),
+		PushSecretEnabled: true, // enable PushSecret feature for testing
+	}).SetupWithManager(k8sManager, controller.Options{
+		MaxConcurrentReconciles: 1,
+		RateLimiter:             ctrlcommon.BuildRateLimiter(),
+	})
 	Expect(err).ToNot(HaveOccurred())
 
 	go func() {

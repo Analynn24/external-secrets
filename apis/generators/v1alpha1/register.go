@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -33,62 +35,84 @@ var (
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
 	SchemeBuilder = &scheme.Builder{GroupVersion: SchemeGroupVersion}
-	AddToScheme   = SchemeBuilder.AddToScheme
+
+	// AddToScheme adds the types in this group-version to the given scheme.
+	AddToScheme = SchemeBuilder.AddToScheme
 )
 
-// ECRAuthorizationToken type metadata.
 var (
-	ECRAuthorizationTokenKind             = reflect.TypeOf(ECRAuthorizationToken{}).Name()
-	ECRAuthorizationTokenGroupKind        = schema.GroupKind{Group: Group, Kind: ECRAuthorizationTokenKind}.String()
-	ECRAuthorizationTokenKindAPIVersion   = ECRAuthorizationTokenKind + "." + SchemeGroupVersion.String()
-	ECRAuthorizationTokenGroupVersionKind = SchemeGroupVersion.WithKind(ECRAuthorizationTokenKind)
-)
-
-// GCRAccessToken type metadata.
-var (
-	GCRAccessTokenKind             = reflect.TypeOf(GCRAccessToken{}).Name()
-	GCRAccessTokenGroupKind        = schema.GroupKind{Group: Group, Kind: GCRAccessTokenKind}.String()
-	GCRAccessTokenKindAPIVersion   = GCRAccessTokenKind + "." + SchemeGroupVersion.String()
-	GCRAccessTokenGroupVersionKind = SchemeGroupVersion.WithKind(GCRAccessTokenKind)
-)
-
-// ACRAccessToken type metadata.
-var (
-	ACRAccessTokenKind             = reflect.TypeOf(ACRAccessToken{}).Name()
-	ACRAccessTokenGroupKind        = schema.GroupKind{Group: Group, Kind: ACRAccessTokenKind}.String()
-	ACRAccessTokenKindAPIVersion   = ACRAccessTokenKind + "." + SchemeGroupVersion.String()
-	ACRAccessTokenGroupVersionKind = SchemeGroupVersion.WithKind(ACRAccessTokenKind)
-)
-
-// Password type metadata.
-var (
-	PasswordKind             = reflect.TypeOf(Password{}).Name()
-	PasswordGroupKind        = schema.GroupKind{Group: Group, Kind: PasswordKind}.String()
-	PasswordKindAPIVersion   = PasswordKind + "." + SchemeGroupVersion.String()
-	PasswordGroupVersionKind = SchemeGroupVersion.WithKind(PasswordKind)
-)
-
-// Fake type metadata.
-var (
-	FakeKind             = reflect.TypeOf(Fake{}).Name()
-	FakeGroupKind        = schema.GroupKind{Group: Group, Kind: FakeKind}.String()
-	FakeKindAPIVersion   = FakeKind + "." + SchemeGroupVersion.String()
-	FakeGroupVersionKind = SchemeGroupVersion.WithKind(FakeKind)
-)
-
-// Vault type metadata.
-var (
-	VaultDynamicSecretKind             = reflect.TypeOf(VaultDynamicSecret{}).Name()
-	VaultDynamicSecretGroupKind        = schema.GroupKind{Group: Group, Kind: VaultDynamicSecretKind}.String()
-	VaultDynamicSecretKindAPIVersion   = VaultDynamicSecretKind + "." + SchemeGroupVersion.String()
-	VaultDynamicSecretGroupVersionKind = SchemeGroupVersion.WithKind(VaultDynamicSecretKind)
+	// ECRAuthorizationTokenKind is the kind name for ECRAuthorizationToken resource.
+	ECRAuthorizationTokenKind = reflect.TypeFor[ECRAuthorizationToken]().Name()
+	// STSSessionTokenKind is the kind name for STSSessionToken resource.
+	STSSessionTokenKind = reflect.TypeFor[STSSessionToken]().Name()
+	// GCRAccessTokenKind is the kind name for GCRAccessToken resource.
+	GCRAccessTokenKind = reflect.TypeFor[GCRAccessToken]().Name()
+	// ACRAccessTokenKind is the kind name for ACRAccessToken resource.
+	ACRAccessTokenKind = reflect.TypeFor[ACRAccessToken]().Name()
+	// PasswordKind is the kind name for Password resource.
+	PasswordKind = reflect.TypeFor[Password]().Name()
+	// SSHKeyKind is the kind name for SSHKey resource.
+	SSHKeyKind = reflect.TypeFor[SSHKey]().Name()
+	// WebhookKind is the kind name for Webhook resource.
+	WebhookKind = reflect.TypeFor[Webhook]().Name()
+	// FakeKind is the kind name for Fake resource.
+	FakeKind = reflect.TypeFor[Fake]().Name()
+	// VaultDynamicSecretKind is the kind name for VaultDynamicSecret resource.
+	VaultDynamicSecretKind = reflect.TypeFor[VaultDynamicSecret]().Name()
+	// GithubAccessTokenKind is the kind name for GithubAccessToken resource.
+	GithubAccessTokenKind = reflect.TypeFor[GithubAccessToken]().Name()
+	// GitlabDeployTokenKind is the kind name for GitlabDeployToken resource.
+	GitlabDeployTokenKind = reflect.TypeFor[GitlabDeployToken]().Name()
+	// QuayAccessTokenKind is the kind name for QuayAccessToken resource.
+	QuayAccessTokenKind = reflect.TypeFor[QuayAccessToken]().Name()
+	// UUIDKind is the kind name for UUID resource.
+	UUIDKind = reflect.TypeFor[UUID]().Name()
+	// GrafanaKind is the kind name for Grafana resource.
+	GrafanaKind = reflect.TypeFor[Grafana]().Name()
+	// MFAKind is the kind name for MFA resource.
+	MFAKind = reflect.TypeFor[MFA]().Name()
+	// ClusterGeneratorKind is the kind name for ClusterGenerator resource.
+	ClusterGeneratorKind = reflect.TypeFor[ClusterGenerator]().Name()
+	// CloudsmithAccessTokenKind is the kind name for CloudsmithAccessToken resource.
+	CloudsmithAccessTokenKind = reflect.TypeFor[CloudsmithAccessToken]().Name()
+	// BeyondtrustWorkloadCredentialsDynamicSecretKind is the kind name for BeyondtrustWorkloadCredentialsDynamicSecret resource.
+	BeyondtrustWorkloadCredentialsDynamicSecretKind = reflect.TypeFor[BeyondtrustWorkloadCredentialsDynamicSecret]().Name()
 )
 
 func init() {
-	SchemeBuilder.Register(&ECRAuthorizationToken{}, &ECRAuthorizationToken{})
-	SchemeBuilder.Register(&GCRAccessToken{}, &GCRAccessTokenList{})
+	SchemeBuilder.Register(&GeneratorState{}, &GeneratorStateList{})
+
+	/*
+		===============================================================================
+		 NOTE: when adding support for new kinds of generators:
+		  1. register the struct types in `SchemeBuilder` (right below this note)
+		  2. update the `kubebuilder:validation:Enum` annotation for GeneratorRef.Kind (apis/externalsecrets/v1beta1/externalsecret_types.go)
+		  3. add it to the imports of (pkg/generator/register/register.go)
+		  4. add it to the ClusterRole called "*-controller" (deploy/charts/external-secrets/templates/rbac.yaml)
+		  5. support it in ClusterGenerator:
+			  - add a new GeneratorKind enum value (apis/generators/v1alpha1/types_cluster.go)
+			  - update the `kubebuilder:validation:Enum` annotation for the GeneratorKind enum
+			  - add a spec field to GeneratorSpec (apis/generators/v1alpha1/types_cluster.go)
+			  - update the clusterGeneratorToVirtual() function (pkg/utils/resolvers/generator.go)
+		===============================================================================
+	*/
+
 	SchemeBuilder.Register(&ACRAccessToken{}, &ACRAccessTokenList{})
+	SchemeBuilder.Register(&BeyondtrustWorkloadCredentialsDynamicSecret{}, &BeyondtrustWorkloadCredentialsDynamicSecretList{})
+	SchemeBuilder.Register(&ClusterGenerator{}, &ClusterGeneratorList{})
+	SchemeBuilder.Register(&CloudsmithAccessToken{}, &CloudsmithAccessTokenList{})
+	SchemeBuilder.Register(&ECRAuthorizationToken{}, &ECRAuthorizationTokenList{})
 	SchemeBuilder.Register(&Fake{}, &FakeList{})
-	SchemeBuilder.Register(&VaultDynamicSecret{}, &VaultDynamicSecretList{})
+	SchemeBuilder.Register(&GCRAccessToken{}, &GCRAccessTokenList{})
+	SchemeBuilder.Register(&GithubAccessToken{}, &GithubAccessTokenList{})
+	SchemeBuilder.Register(&GitlabDeployToken{}, &GitlabDeployTokenList{})
+	SchemeBuilder.Register(&QuayAccessToken{}, &QuayAccessTokenList{})
 	SchemeBuilder.Register(&Password{}, &PasswordList{})
+	SchemeBuilder.Register(&SSHKey{}, &SSHKeyList{})
+	SchemeBuilder.Register(&STSSessionToken{}, &STSSessionTokenList{})
+	SchemeBuilder.Register(&UUID{}, &UUIDList{})
+	SchemeBuilder.Register(&VaultDynamicSecret{}, &VaultDynamicSecretList{})
+	SchemeBuilder.Register(&Webhook{}, &WebhookList{})
+	SchemeBuilder.Register(&Grafana{}, &GrafanaList{})
+	SchemeBuilder.Register(&MFA{}, &MFAList{})
 }

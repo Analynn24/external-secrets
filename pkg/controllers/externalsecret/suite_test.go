@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,9 +22,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"go.uber.org/zap/zapcore"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,8 +34,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	esv1beta1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1beta1"
+	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
 	genv1alpha1 "github.com/external-secrets/external-secrets/apis/generators/v1alpha1"
+	ctrlcommon "github.com/external-secrets/external-secrets/pkg/controllers/common"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
@@ -68,7 +73,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 	Expect(cfg).ToNot(BeNil())
 
-	err = esv1beta1.AddToScheme(scheme.Scheme)
+	err = esv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = genv1alpha1.AddToScheme(scheme.Scheme)
@@ -79,6 +84,17 @@ var _ = BeforeSuite(func() {
 		Metrics: server.Options{
 			BindAddress: "0", // avoid port collision when testing
 		},
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				// the client creates a ListWatch for resources that are requested with .Get() or .List()
+				// we disable caching in the production code, so we disable it here as well for consistency
+				// see: https://github.com/external-secrets/external-secrets/issues/721
+				DisableFor: []client.Object{
+					&v1.Secret{},
+					&v1.ConfigMap{},
+				},
+			},
+		},
 	})
 	Expect(err).ToNot(HaveOccurred())
 
@@ -88,15 +104,23 @@ var _ = BeforeSuite(func() {
 	Expect(k8sClient).ToNot(BeNil())
 	Expect(err).ToNot(HaveOccurred())
 
+	// by default, we use a separate cached client for secrets that are managed by the controller
+	// so we should test under the same conditions
+	secretClient, err := ctrlcommon.BuildManagedSecretClient(k8sManager, "")
+	Expect(err).ToNot(HaveOccurred())
+
 	err = (&Reconciler{
-		Client:                    k8sClient,
-		RestConfig:                cfg,
-		Scheme:                    k8sManager.GetScheme(),
-		Log:                       ctrl.Log.WithName("controllers").WithName("ExternalSecrets"),
-		RequeueInterval:           time.Second,
-		ClusterSecretStoreEnabled: true,
-	}).SetupWithManager(k8sManager, controller.Options{
+		Client:                             k8sManager.GetClient(),
+		SecretClient:                       secretClient,
+		EnableSecretAPIReadOnCacheMismatch: true,
+		RestConfig:                         cfg,
+		Scheme:                             k8sManager.GetScheme(),
+		Log:                                ctrl.Log.WithName("controllers").WithName("ExternalSecrets"),
+		RequeueInterval:                    time.Second,
+		ClusterSecretStoreEnabled:          true,
+	}).SetupWithManager(ctx, k8sManager, controller.Options{
 		MaxConcurrentReconciles: 1,
+		RateLimiter:             ctrlcommon.BuildRateLimiter(),
 	})
 	Expect(err).ToNot(HaveOccurred())
 
@@ -113,7 +137,7 @@ var _ = AfterSuite(func() {
 		// Need to sleep if the first stop fails due to a bug:
 		// https://github.com/kubernetes-sigs/controller-runtime/issues/1571
 		sleepTime := 1 * time.Millisecond
-		for i := 0; i < 12; i++ { // Exponentially sleep up to ~4s
+		for range 12 { // Exponentially sleep up to ~4s
 			if err = testEnv.Stop(); err == nil {
 				return
 			}

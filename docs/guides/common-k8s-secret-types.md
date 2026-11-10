@@ -32,19 +32,19 @@ This will generate a valid dockerconfigjson secret for you to use!
 You can get the final value with:
 
 ```bash
-kubectl get secret secret-to-be-created -n <namespace> -o jsonpath="{.data\.dockerconfigjson}" | base64 -d
+kubectl get secret secret-to-be-created -n <namespace> -o jsonpath="{.data.\.dockerconfigjson}" | base64 -d
 ```
 
 Alternately, if you only have the container registry name and password value, you can take advantage of the advanced ExternalSecret templating functions to create the secret:
 
 ```yaml
 {% raw %}
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: dk-cfg-example
 spec:
-  refreshInterval: 1h
+  refreshInterval: 1h0m0s
   secretStoreRef:
     name: example
     kind: SecretStore

@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,6 +17,12 @@ limitations under the License.
 package addon
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes"
@@ -22,6 +30,7 @@ import (
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/external-secrets/external-secrets-e2e/framework/log"
+	"github.com/external-secrets/external-secrets-e2e/framework/util"
 )
 
 var globalAddons []Addon
@@ -48,14 +57,19 @@ type Addon interface {
 	Uninstall() error
 }
 
-func InstallGlobalAddon(addon Addon, cfg *Config) {
+func InstallGlobalAddon(addon Addon) {
 	globalAddons = append(globalAddons, addon)
+	cfg := &Config{}
+	cfg.KubeConfig, cfg.KubeClientSet, cfg.CRClient = util.NewConfig()
 
 	ginkgo.By("installing global addon")
 	err := addon.Setup(cfg)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	err = addon.Install()
+	if err != nil {
+		addon.Logs() // Print logs in case installation fails
+	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
@@ -65,6 +79,82 @@ func UninstallGlobalAddons() {
 		err := addon.Uninstall()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
+}
+
+const skipGlobalTeardownVar = "E2E_SKIP_GLOBAL_TEARDOWN"
+
+// SkipGlobalTeardown reports whether to leave the global addons installed, for a
+// cluster that is about to be discarded. Off unless asked for, and refused when
+// several suites share the cluster, since two of them install the same release.
+func SkipGlobalTeardown() bool {
+	raw, ok := os.LookupEnv(skipGlobalTeardownVar)
+	if !ok || raw == "" {
+		return false
+	}
+	skip, err := strconv.ParseBool(raw)
+	if err != nil {
+		// Failing here would unwind the whole AfterSuite, losing the teardown
+		// and the logs, so fall back to tearing down and say so.
+		teardownLogf("%s is not a boolean (%q), so the teardown will run: %v",
+			skipGlobalTeardownVar, raw, err)
+		return false
+	}
+	if !skip {
+		return false
+	}
+	// Only sees this process. Two separate single-suite runs against one cluster
+	// would still collide.
+	if suites := strings.Fields(os.Getenv("TEST_SUITES")); len(suites) > 1 {
+		teardownLogf("%s ignored: suites %q share one cluster, so the global "+
+			"addons have to come out between them", skipGlobalTeardownVar,
+			strings.Join(suites, " "))
+		return false
+	}
+	teardownLogf("%s set: leaving the global addons installed for the cluster to "+
+		"be discarded with", skipGlobalTeardownVar)
+	return true
+}
+
+// teardownLogf logs to stderr, not log.Logf: ginkgo drops GinkgoWriter output
+// for a passing node without -v, and these lines must survive a green run.
+func teardownLogf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+// AssetDir returns the path to the k8s asset directory
+// which holds the helm charts, vault and conjur configuration.
+// It starts at the cwd, and walks its way up to the root.
+// It returns /k8s as a fallback.
+// When running the e2e suite locally, this should return $REPO/e2e/k8s,
+// when ran in CI this returns /k8s because the tests run in a dedicated pod where
+// the assets are copied into the container.
+func AssetDir() string {
+	// Start from current working directory
+	currentDir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	// Traverse up the directory tree looking for "k8s" directory
+	for {
+		k8sPath := filepath.Join(currentDir, "k8s")
+
+		// Check if "k8s" directory exists
+		if info, err := os.Stat(k8sPath); err == nil && info.IsDir() {
+			return k8sPath
+		}
+
+		// Get parent directory
+		parentDir := filepath.Dir(currentDir)
+
+		// If we've reached the root directory, stop searching
+		if parentDir == currentDir {
+			break
+		}
+
+		currentDir = parentDir
+	}
+	return "/k8s"
 }
 
 func PrintLogs() {

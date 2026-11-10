@@ -1,0 +1,85 @@
+/*
+Copyright © The ESO Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1
+
+import esmeta "github.com/external-secrets/external-secrets/apis/meta/v1"
+
+// NebiusAuth defines the authentication method for the Nebius provider.
+// +kubebuilder:validation:XValidation:rule="(has(self.serviceAccountCredsSecretRef) && has(self.serviceAccountCredsSecretRef.name) && size(self.serviceAccountCredsSecretRef.name) > 0 ? 1 : 0) + (has(self.tokenSecretRef) && has(self.tokenSecretRef.name) && size(self.tokenSecretRef.name) > 0 ? 1 : 0) + (has(self.workloadIdentity) ? 1 : 0) == 1",message="exactly one of serviceAccountCredsSecretRef, tokenSecretRef, or workloadIdentity must be set"
+//
+//nolint:lll // Kubebuilder validation markers cannot be split across multiple lines.
+type NebiusAuth struct {
+	// ServiceAccountCreds references a Kubernetes Secret key that contains a JSON
+	// document with service account credentials used to get an IAM token.
+	//
+	// Expected JSON structure:
+	// {
+	//   "subject-credentials": {
+	//     "alg": "RS256",
+	//     "private-key": "-----BEGIN PRIVATE KEY-----\n<private-key>\n-----END PRIVATE KEY-----\n",
+	//     "kid": "<public-key-id>",
+	//     "iss": "<issuer-service-account-id>",
+	//     "sub": "<subject-service-account-id>"
+	//   }
+	// }
+	// +optional
+	ServiceAccountCreds esmeta.SecretKeySelector `json:"serviceAccountCredsSecretRef,omitempty"`
+	// Token authenticates with Nebius SecretStash by presenting a token.
+	// +optional
+	Token esmeta.SecretKeySelector `json:"tokenSecretRef,omitempty"`
+
+	// WorkloadIdentity defines configuration for workload identity authentication to Nebius IAM.
+	// +optional
+	WorkloadIdentity *NebiusWorkloadIdentity `json:"workloadIdentity,omitempty"`
+}
+
+// NebiusCAProvider The provider for the CA bundle to use to validate Nebius server certificate.
+type NebiusCAProvider struct {
+	// +optional
+	Certificate esmeta.SecretKeySelector `json:"certSecretRef,omitempty"`
+}
+
+// NebiusWorkloadIdentity defines configuration for workload identity authentication to Nebius IAM.
+type NebiusWorkloadIdentity struct {
+	// ServiceAccountRef references a Kubernetes ServiceAccount used to request a
+	// temporary JWT via the TokenRequest API. The JWT is then exchanged for a
+	// Nebius IAM token using workload federation.
+	// +kubebuilder:validation:Required
+	ServiceAccountRef *esmeta.ServiceAccountSelector `json:"serviceAccountRef"`
+
+	// IAMServiceAccountID is the Nebius IAM service account identifier that the
+	// federated Kubernetes service account should impersonate during token exchange.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern:=`^serviceaccount-[a-z][a-z0-9]{2}`
+	// +kubebuilder:example="serviceaccount-e00example"
+	IAMServiceAccountID string `json:"iamServiceAccountID"`
+}
+
+// NebiusMysteryboxProvider Configures a store to sync secrets using the Nebius SecretStash provider.
+type NebiusMysteryboxProvider struct {
+
+	// Nebius SecretStash API endpoint
+	APIDomain string `json:"apiDomain"`
+
+	// Auth defines parameters to authenticate in SecretStash
+	Auth NebiusAuth `json:"auth"`
+
+	// The provider for the CA bundle to use to validate Nebius SecretStash server certificate.
+	// +optional
+	CAProvider *NebiusCAProvider `json:"caProvider,omitempty"`
+}

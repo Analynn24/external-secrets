@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,7 +27,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	client "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -33,9 +34,13 @@ import (
 
 const (
 	failedCreateCaCerts     = "could not create ca certificates:%v"
+	failedCreateCaChain     = "could not create the intermediate certificates:%v"
 	failedCreateServerCerts = "could not create server certificates:%v"
 	invalidCerts            = "generated certificates are invalid:%v,%v"
 	dnsName                 = "foobar"
+	tlscrt                  = "/tmp/tls"
+	tlskey                  = "/tmp/key"
+	cacrt                   = "/tmp/ca"
 )
 
 func newReconciler() Reconciler {
@@ -50,28 +55,22 @@ func newReconciler() Reconciler {
 
 func newService() corev1.Service {
 	return corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "foo",
-			Namespace: "default",
-			Labels:    map[string]string{"foo": "bar"},
-		},
+		Name:      "foo",
+		Namespace: "default",
+		Labels:    map[string]string{"foo": "bar"},
 	}
 }
 func newSecret() corev1.Secret {
 	return corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "foo",
-			Namespace: "default",
-			Labels:    map[string]string{"foo": "bar"},
-		},
+		Name:      "foo",
+		Namespace: "default",
+		Labels:    map[string]string{"foo": "bar"},
 	}
 }
 
 func newCRD() apiextensionsv1.CustomResourceDefinition {
 	return apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "one",
-		},
+		Name: "one",
 		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
 			Conversion: &apiextensionsv1.CustomResourceConversion{
 				Strategy: "Webhook",
@@ -91,21 +90,59 @@ func newCRD() apiextensionsv1.CustomResourceDefinition {
 }
 
 func TestUpdateCRD(t *testing.T) {
-	rec := newReconciler()
 	svc := newService()
 	secret := newSecret()
 	crd := newCRD()
 	c := client.NewClientBuilder().WithObjects(&svc, &secret, &crd).Build()
+
+	rec := newReconciler()
 	rec.Client = c
+
 	ctx := context.Background()
 	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name: "one",
-		},
+		Name: "one",
 	}
+
 	err := rec.updateCRD(ctx, req)
 	if err != nil {
-		t.Errorf("Failed updating CRD: %v", err)
+		t.Fatalf("Failed updating CRD: %v", err)
+	}
+
+	var updatedCRD apiextensionsv1.CustomResourceDefinition
+	var updatedSecret corev1.Secret
+
+	err = c.Get(ctx, req.NamespacedName, &updatedCRD)
+	if err != nil {
+		t.Fatalf("Failed getting updated CRD: %v", err)
+	}
+
+	err = c.Get(ctx, types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, &updatedSecret)
+	if err != nil {
+		t.Fatalf("Failed getting updated secret: %v", err)
+	}
+
+	if updatedCRD.Spec.Conversion.Webhook.ClientConfig.Service.Name != svc.Name {
+		t.Fatalf("Failed updating CRD webhook service name: expected %v, got %v", svc.Name, updatedCRD.Spec.Conversion.Webhook.ClientConfig.Service.Name)
+	}
+
+	if !bytes.Equal(updatedSecret.Data[caCertName], updatedCRD.Spec.Conversion.Webhook.ClientConfig.CABundle) {
+		t.Fatalf("Failed updating CRD webhook ca bundle: expected %v, got %v", string(updatedSecret.Data[caCertName]), string(updatedCRD.Spec.Conversion.Webhook.ClientConfig.CABundle))
+	}
+
+	err = rec.updateCRD(ctx, req)
+	if err != nil {
+		t.Fatalf("Failed updating CRD: %v", err)
+	}
+
+	resourceVersion := updatedCRD.ResourceVersion
+
+	err = c.Get(ctx, req.NamespacedName, &updatedCRD)
+	if err != nil {
+		t.Fatalf("Failed getting updated CRD: %v", err)
+	}
+
+	if updatedCRD.ResourceVersion != resourceVersion {
+		t.Errorf("expected no change in resource version: %v, got %v", resourceVersion, updatedCRD.ResourceVersion)
 	}
 }
 
@@ -253,9 +290,59 @@ func TestCheckCerts(t *testing.T) {
 	if err != nil {
 		t.Errorf(failedCreateServerCerts, err)
 	}
-	os.WriteFile("/tmp/ca", caArtifacts.CertPEM, 0644)
-	os.WriteFile("/tmp/tls", certPEM, 0644)
-	os.WriteFile("/tmp/key", keyPEM, 0644)
+	os.WriteFile(cacrt, caArtifacts.CertPEM, 0644)
+	os.WriteFile(tlscrt, certPEM, 0644)
+	os.WriteFile(tlskey, keyPEM, 0644)
+	cert := CertInfo{
+		CertDir:  "/tmp",
+		CertName: "tls",
+		CAName:   "ca",
+		KeyName:  "key",
+	}
+	err = CheckCerts(cert, rec.dnsName, time.Now())
+	if err != nil {
+		t.Errorf("error checking valid cert: %v", err)
+	}
+	err = CheckCerts(cert, rec.dnsName, time.Now().AddDate(-1, 0, 0))
+	if err == nil {
+		t.Error("expected failure due to expired certificate, got success")
+	}
+	err = CheckCerts(cert, "wrong", time.Now())
+	if err == nil {
+		t.Error("expected failure due to dns name got, success")
+	}
+	cert.CAName = "wrong"
+	err = CheckCerts(cert, rec.dnsName, time.Now())
+	if err == nil {
+		t.Error("expected failure due to wrong certificate name, got success")
+	}
+}
+
+func TestCheckCertChain(t *testing.T) {
+	rec := newReconciler()
+	rec.dnsName = dnsName
+	caArtifacts, err := rec.CreateCACert(time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 2))
+	if err != nil {
+		t.Fatalf(failedCreateCaCerts, err)
+	}
+	chainArtifacts, err := rec.CreateCAChain(caArtifacts, time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 2))
+	if err != nil {
+		t.Fatalf(failedCreateCaChain, err)
+	}
+	certPEM, keyPEM, err := rec.CreateCertPEM(chainArtifacts, time.Now(), time.Now().AddDate(0, 0, 1))
+	if err != nil {
+		t.Errorf(failedCreateServerCerts, err)
+	}
+	_ = os.WriteFile(cacrt, caArtifacts.CertPEM, 0644)
+	_ = os.WriteFile(tlscrt, certPEM, 0644)
+	f, _ := os.OpenFile(tlscrt, os.O_APPEND|os.O_WRONLY, 0644)
+	defer func() {
+		_ = f.Close()
+	}()
+	if _, err = f.Write(chainArtifacts.CertPEM); err != nil {
+		t.Errorf(failedCreateCaChain, err)
+	}
+	_ = os.WriteFile(tlskey, keyPEM, 0644)
 	cert := CertInfo{
 		CertDir:  "/tmp",
 		CertName: "tls",

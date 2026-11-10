@@ -2,13 +2,30 @@
 
 A list of blogs written by people all over the community. Feel free to let us know if you are writing about ESO at some place! We would be happy to mention you here!
 
+## [Manage your secrets using OVHcloud Secret Manager with External Secrets Operator (ESO) on OVHcloud Managed Kubernetes Service (MKS)](https://blog.ovhcloud.com/manage-your-secrets-through-ovhcloud-secret-manager-thanks-to-external-secrets-operator-eso-on-ovhcloud-managed-kubernetes-service-mks/)
+
+[@Aurélie Vache](https://www.linkedin.com/in/aurelie-vache/) walks you through how to discover ESO and integrate it with the new OVHcloud Secret Manager using the HashiCorp Vault provider. The blog post provides a step-by-step guide covering the setup of OVHcloud prerequisites, the creation of a secret in Secret Manager, the deployment of ESO in a Kubernetes cluster, and the configuration of both ClusterSecretStore and ExternalSecret resources.
+
+## [Pulumi ESC and External Secrets Operator: The Perfect Solution for Today's Cloud-Native Secret Management](https://www.pulumi.com/blog/cloud-native-secret-management-with-pulumi-esc-and-external-secrets-operator/)
+
+[@Engin Diri](https://www.linkedin.com/in/engin-diri/) walks through the integration of ESO with Pulumi ESC, offering a practical guide for enhancing security from cloud-native application development to infrastructure provisioning. This blog provides a hands-on guide to setting up ESO and Pulumi ESC, and demonstrates how to use them together to manage secrets in a Kubernetes cluster.
+
+## [From vulnerable to unhackable: secrets management in cloud-native environments](https://medium.com/@as_mallem/from-vulnerable-to-unhackable-secrets-management-in-cloud-native-environments-cb341bd97869/)
+
+[@Saliha Mallem](https://www.linkedin.com/in/saliha-mallem/) writes about integrating ESO with IBM Cloud Secrets Manager. In her blog, she outlines the steps to deploy ESO and demonstrates how to use both the Secrets Manager API and the Vault API for seamless integration. The blog is user-friendly and easy to follow.
+
+## [Enhancing Kubernetes Security and Flexibility with the CyberArk Conjur and ESO Integration](https://developer.cyberark.com/blog/enhancing-kubernetes-security-and-flexibility-with-the-cyberark-conjur-and-eso-integration/)
+
+[@szh](https://github.com/szh) Writes about using ESO with CyberArk Conjur. He includes detailed steps on how to
+set up a local environment with Docker Desktop and how to deploy ESO and Conjur OSS on it.
+
 ## [Comparing External Secrets Operator with Secret Storage CSI as Kubernetes External Secrets is Deprecated](https://mixi-developers.mixi.co.jp/compare-eso-with-secret-csi-402bf37f20bc)
 
 @riddle writes about choosing ESO when comparing with Secret Store CSI Driver in their specific use case. They show us the relevant differences between the projects when looking at their scenario and requirements while integrating with ArgoCD. [Comparing External Secrets Operator with Secret Storage CSI as Kubernetes External Secrets is Deprecated](https://mixi-developers.mixi.co.jp/compare-eso-with-secret-csi-402bf37f20bc)
 
 ## [Tutorial: Getting Started with External Secrets Operator on Kubernetes using AWS Secrets Manager](https://ptuladhar3.medium.com/getting-started-with-external-secrets-operator-on-kubernetes-using-aws-secrets-manager-6dc403d9630c)
 
-Puru writes about getting started using ESO with AWS Secrets Manager. He uses illustrations to explain ESO to new users and get's you to quickly start using ESO, as article is easy to follow along. [Getting Started with External Secrets Operator on Kubernetes using AWS Secrets Manager](https://ptuladhar3.medium.com/getting-started-with-external-secrets-operator-on-kubernetes-using-aws-secrets-manager-6dc403d9630c)
+Puru writes about getting started using ESO with AWS Secrets Manager. He uses illustrations to explain ESO to new users and gets you to quickly start using ESO, as article is easy to follow along. [Getting Started with External Secrets Operator on Kubernetes using AWS Secrets Manager](https://ptuladhar3.medium.com/getting-started-with-external-secrets-operator-on-kubernetes-using-aws-secrets-manager-6dc403d9630c)
 
 ## [Tutorial: How to Set External-Secrets with Azure KeyVault](https://blog.container-solutions.com/tutorial-external-secrets-with-azure-keyvault)
 
@@ -58,4 +75,12 @@ Emin writes about the Push Secret feature of ESO and how this new feature revers
 
 ## [GCP Secret Manager with self-hosted Kubernetes](https://medium.com/@jjlakis/gcp-secret-manager-with-self-hosted-kubernetes-db35d01d65f0)
 
-Jacek writes about bringing GCP secrets to on-premises cluster through External Secrets Operator intergration with workload identity.
+Jacek writes about bringing GCP secrets to on-premises cluster through External Secrets Operator integration with workload identity.
+
+## [Injecting AWS Secrets in a Kubernetes Cluster with External Secrets Operator](https://blog.devops.dev/injecting-external-secrets-in-a-kubernetes-cluster-1e9bbe0f0d5b)
+
+Ali writes about integrating AWS Secrets Manager and Parameter Store secrets within an EKS Cluster using ESO. He shows a quick setup of the operator, and how to fetch secrets in a repeatable fashion. The guide is bundled with cool illustrations and code snippets that describe the ESO architecture and injection process
+
+## [Encoding & Decoding Kubernetes Secrets — ESO Advanced Templating](https://blog.devops.dev/encoding-decoding-kubernetes-secrets-externalsecrets-operator-826b9680df63)
+
+Here, Ali briefly introduces templates within ESO and describes some use cases where templating can be crucial. Code snippets are included where needed too.

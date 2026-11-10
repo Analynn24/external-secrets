@@ -2,7 +2,7 @@
 
 The `ClusterExternalSecret` is a cluster scoped resource that can be used to manage `ExternalSecret` resources in specific namespaces.
 
-With `namespaceSelector` you can select namespaces in which the ExternalSecret should be created.
+With `namespaceSelectors` you can select namespaces in which the ExternalSecret should be created.
 If there is a conflict with an existing resource the controller will error out.
 
 ## Example
@@ -12,3 +12,77 @@ Below is an example of the `ClusterExternalSecret` in use.
 ```yaml
 {% include 'full-cluster-external-secret.yaml' %}
 ```
+
+## Reducing provider calls for large namespace sets
+
+A `ClusterExternalSecret` creates one `ExternalSecret` per matched namespace,
+and **each of those `ExternalSecret`s independently polls the upstream provider** on its own `refreshInterval`. 
+This means provider API calls scale linearly with the number of matched namespaces, which can be costly or hit rate limits. 
+This is a known characteristic of the design.
+
+![Direct polling: each namespace polls the provider independently](../pictures/diagrams-ces-direct-polling.png)
+
+If your selector matches more than a handful of namespaces, the recommended pattern is to pull
+from the upstream provider **once** into a single in-cluster `Secret`, then
+use the [Kubernetes provider](../provider/kubernetes.md) to fan that
+`Secret` out via the `ClusterExternalSecret`:
+
+1. A single namespace-scoped `ExternalSecret` pulls from the upstream
+   provider and writes a `Secret` in a dedicated "source" namespace.
+2. A `ClusterSecretStore` using the Kubernetes provider points at that
+   source `Secret`.
+3. A `ClusterExternalSecret` references that `ClusterSecretStore`,
+   replicating the `Secret` into every matched namespace. Regardless of how
+   many namespaces match, the upstream provider is only called by the single
+   source `ExternalSecret` in step 1.
+
+![Fan-out pattern: only the source ExternalSecret polls the provider](../pictures/diagrams-ces-fanout-pattern.png)
+
+!!! warning "Fan-out targets and `creationPolicy`"
+    Omitting `spec.externalSecretSpec.target.creationPolicy` defaults to `Owner`.
+    The ClusterExternalSecret owns and deletes per-namespace ExternalSecrets
+    when the CES is replaced or a namespace stops matching `namespaceSelectors`.
+    With `Owner`, Kubernetes also garbage-collects the fanned-out Secrets via
+    `ownerReference`. `deletionPolicy: Retain` does not prevent that — Retain is
+    the provider-side axis.
+    No combination gives both properties. `Owner`
+    revokes the copy when a namespace is de-selected, but CES replacement
+    also drops the Secret. `Orphan` / `CreateOrMerge` + `Retain` survives
+    replacement, but the de-selected namespace keeps a stale, unrefreshed
+    copy. Use `Orphan` when a mount gap hurts (CA bundles, wildcard TLS).
+    Keep `Owner` for credentials that must disappear when the namespace is
+    unlabelled. The snippet below is a CA bundle, so it sets `Orphan`. See
+    [Lifecycle: ownership & deletion](../guides/ownership-deletion-policy.md).
+
+```yaml
+{% include 'cluster-external-secret-fanout.yaml' %}
+```
+
+The `ServiceAccount` and RBAC for the Kubernetes provider store are the same
+as described in the [Kubernetes provider docs](../provider/kubernetes.md).
+
+Direct use of `ClusterExternalSecret` against a cloud-backed store is still
+appropriate for small namespace sets or when per-namespace refresh isolation
+is intentional. This is a recommendation for minimizing provider load, not
+a deprecation of the simpler pattern shown above.
+
+## Synchronizing corresponding ExternalSecrets
+
+Regular refreshes can be controlled using the `refreshPolicy` and
+`refreshInterval` fields. Adhoc synchronizations can be triggered by
+setting, updating or deleting the annotation `external-secrets.io/force-sync`
+on the ClusterExternalSecret:
+
+```
+kubectl annotate ces my-ces external-secrets.io/force-sync=$(date +%s) --overwrite
+```
+
+Changes to this annotation will be synchronized to all ExternalSecrets
+owned by the ClusterExternalSecret.
+
+## Deprecations
+
+### namespaceSelector
+
+The field `namespaceSelector` has been deprecated in favor of `namespaceSelectors` and will be removed in a future
+version.

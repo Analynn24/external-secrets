@@ -1,22 +1,9 @@
-FROM golang:1.21.6-bookworm@sha256:d8c365d63879c2312e332cb796961f2695dd65124ceb3c0247d9c5426b7dde5f as builder
-
-ENV KUBECTL_VERSION="v1.28.3"
-ENV HELM_VERSION="v3.13.1"
-
+# Pinned release: golang:1.27.3-bookworm (Go; tracking 1.x on Debian Bookworm)
+FROM golang@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS builder
 RUN go install github.com/onsi/ginkgo/v2/ginkgo@v2.1.6
-RUN wget -q https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl -O /usr/local/bin/kubectl && \
-    chmod +x /usr/local/bin/kubectl && \
-    wget -q https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz -O - | tar -xzO linux-amd64/helm > /usr/local/bin/helm && \
-    chmod +x /usr/local/bin/helm
 
-WORKDIR /usr/src/app
-COPY go.mod go.sum ./
-RUN go mod download && go mod verify
-COPY . .
-WORKDIR /usr/src/app/e2e
-RUN make e2e-bin
-
-FROM alpine:3.19.1@sha256:c5b1261d6d3e43071626931fc004f70149baeba2c8ec672bd4f27761f8e1ad6b
+# Pinned release: alpine:3.24.3 (Alpine; tracking 3.x)
+FROM alpine@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 RUN apk add -U --no-cache \
     ca-certificates \
     bash \
@@ -25,15 +12,20 @@ RUN apk add -U --no-cache \
     libc6-compat \
     openssl
 
+ENV KUBECTL_VERSION="v1.34.1"
+ENV HELM_VERSION="v3.19.0"
+RUN curl -LO https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl && \
+    chmod +x kubectl && \
+    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl && \
+    wget -q https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz -O - | tar -xzO linux-amd64/helm > /usr/local/bin/helm && \
+    chmod +x /usr/local/bin/helm
 COPY --from=builder /go/bin/ginkgo /usr/local/bin/
-COPY --from=builder /usr/local/bin/kubectl /usr/local/bin/
-COPY --from=builder /usr/local/bin/helm /usr/local/bin/
 
-COPY --from=builder /usr/src/app/e2e/entrypoint.sh                   /entrypoint.sh
-COPY --from=builder /usr/src/app/e2e/suites/provider/provider.test   /provider.test
-COPY --from=builder /usr/src/app/e2e/suites/argocd/argocd.test       /argocd.test
-COPY --from=builder /usr/src/app/e2e/suites/flux/flux.test           /flux.test
-COPY --from=builder /usr/src/app/e2e/suites/generator/generator.test /generator.test
-COPY --from=builder /usr/src/app/e2e/k8s                             /k8s
+ADD e2e/entrypoint.sh /entrypoint.sh
+ADD e2e/k8s /k8s
+ADD e2e/suites/provider/provider.test /provider.test
+ADD e2e/suites/argocd/argocd.test /argocd.test
+ADD e2e/suites/flux/flux.test /flux.test
+ADD e2e/suites/generator/generator.test /generator.test
 
 CMD [ "/entrypoint.sh" ]

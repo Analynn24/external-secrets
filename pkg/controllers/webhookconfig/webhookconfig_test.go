@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,13 +21,15 @@ import (
 	"context"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	admissionregistration "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/types"
-	pointer "k8s.io/utils/ptr"
+
+	"github.com/external-secrets/external-secrets/runtime/constants"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const defaultCACert = `-----BEGIN CERTIFICATE-----
@@ -51,11 +55,11 @@ lNjvmHAXUfOE/cbD7EP++X17kWt41FjmePc=
 `
 
 type testCase struct {
-	vwc       *admissionregistration.ValidatingWebhookConfiguration
-	service   *corev1.Service
-	endpoints *corev1.Endpoints
-	secret    *corev1.Secret
-	assert    func()
+	vwc           *admissionregistration.ValidatingWebhookConfiguration
+	service       *corev1.Service
+	endpointSlice *discoveryv1.EndpointSlice
+	secret        *corev1.Secret
+	assert        func()
 }
 
 var _ = Describe("ValidatingWebhookConfig reconcile", Ordered, func() {
@@ -70,17 +74,15 @@ var _ = Describe("ValidatingWebhookConfig reconcile", Ordered, func() {
 		k8sClient.Delete(ctx, test.vwc)
 		k8sClient.Delete(ctx, test.secret)
 		k8sClient.Delete(ctx, test.service)
-		k8sClient.Delete(ctx, test.endpoints)
+		k8sClient.Delete(ctx, test.endpointSlice)
 	})
 
 	// Should patch VWC
 	PatchAndReady := func(tc *testCase) {
-		tc.endpoints.Subsets = nil
-
-		// endpoints become ready in a moment
+		// endpoint slice becomes ready in a moment
 		go func() {
 			<-time.After(time.Second * 4)
-			eps := makeEndpoints()
+			eps := makeEndpointSlice()
 			err := k8sClient.Update(context.Background(), eps)
 			Expect(err).ToNot(HaveOccurred())
 		}()
@@ -125,7 +127,7 @@ var _ = Describe("ValidatingWebhookConfig reconcile", Ordered, func() {
 	}
 
 	IgnoreNoMatch := func(tc *testCase) {
-		delete(tc.vwc.ObjectMeta.Labels, wellKnownLabelKey)
+		delete(tc.vwc.ObjectMeta.Labels, constants.WellKnownLabelKey)
 		tc.assert = func() {
 			Consistently(func() bool {
 				var vwc admissionregistration.ValidatingWebhookConfiguration
@@ -167,7 +169,7 @@ var _ = Describe("ValidatingWebhookConfig reconcile", Ordered, func() {
 			Expect(err).ToNot(HaveOccurred())
 		}()
 		tc.assert = func() {
-
+			var resourceVersion string
 			Eventually(func() bool {
 				var vwc admissionregistration.ValidatingWebhookConfiguration
 				err := k8sClient.Get(context.Background(), types.NamespacedName{
@@ -190,11 +192,26 @@ var _ = Describe("ValidatingWebhookConfig reconcile", Ordered, func() {
 						return false
 					}
 				}
+				resourceVersion = vwc.ResourceVersion
 				return true
 			}).
 				WithTimeout(time.Second * 10).
 				WithPolling(time.Second).
 				Should(BeTrue())
+
+			// make sure no additional updates are made
+			Consistently(func() bool {
+				var vwc admissionregistration.ValidatingWebhookConfiguration
+				err := k8sClient.Get(context.Background(), types.NamespacedName{Name: tc.vwc.Name}, &vwc)
+				if err != nil {
+					return false
+				}
+				return vwc.ResourceVersion == resourceVersion
+			}).
+				WithTimeout(time.Second * 10).
+				WithPolling(time.Second).
+				Should(BeTrue())
+
 		}
 	}
 
@@ -213,7 +230,7 @@ var _ = Describe("ValidatingWebhookConfig reconcile", Ordered, func() {
 		err = k8sClient.Create(ctx, test.service)
 		Expect(err).ToNot(HaveOccurred())
 
-		err = k8sClient.Create(ctx, test.endpoints)
+		err = k8sClient.Create(ctx, test.endpointSlice)
 		Expect(err).ToNot(HaveOccurred())
 
 		test.assert()
@@ -228,36 +245,34 @@ var _ = Describe("ValidatingWebhookConfig reconcile", Ordered, func() {
 
 func makeValidatingWebhookConfig() *admissionregistration.ValidatingWebhookConfiguration {
 	return &admissionregistration.ValidatingWebhookConfiguration{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "name-shouldnt-matter",
-			Labels: map[string]string{
-				wellKnownLabelKey: wellKnownLabelValue,
-			},
+		Name: "name-shouldnt-matter",
+		Labels: map[string]string{
+			constants.WellKnownLabelKey: constants.WellKnownLabelValueWebhook,
 		},
 		Webhooks: []admissionregistration.ValidatingWebhook{
 			{
 				Name:                    "secretstores.external-secrets.io",
-				SideEffects:             (*admissionregistration.SideEffectClass)(pointer.To(string(admissionregistration.SideEffectClassNone))),
+				SideEffects:             new(admissionregistration.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 				ClientConfig: admissionregistration.WebhookClientConfig{
 					CABundle: []byte("Cg=="),
 					Service: &admissionregistration.ServiceReference{
 						Name:      "noop",
 						Namespace: "noop",
-						Path:      pointer.To("/validate-secretstore"),
+						Path:      new("/validate-secretstore"),
 					},
 				},
 			},
 			{
 				Name:                    "clustersecretstores.external-secrets.io",
-				SideEffects:             (*admissionregistration.SideEffectClass)(pointer.To(string(admissionregistration.SideEffectClassNone))),
+				SideEffects:             new(admissionregistration.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 				ClientConfig: admissionregistration.WebhookClientConfig{
 					CABundle: []byte("Cg=="),
 					Service: &admissionregistration.ServiceReference{
 						Name:      "noop",
 						Namespace: "noop",
-						Path:      pointer.To("/validate-clustersecretstore"),
+						Path:      new("/validate-clustersecretstore"),
 					},
 				},
 			},
@@ -267,10 +282,8 @@ func makeValidatingWebhookConfig() *admissionregistration.ValidatingWebhookConfi
 
 func makeSecret() *corev1.Secret {
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ctrlSecretName,
-			Namespace: ctrlSecretNamespace,
-		},
+		Name:      ctrlSecretName,
+		Namespace: ctrlSecretNamespace,
 		Data: map[string][]byte{
 			caCertName: []byte(defaultCACert),
 		},
@@ -279,10 +292,8 @@ func makeSecret() *corev1.Secret {
 
 func makeService() *corev1.Service {
 	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ctrlSvcName,
-			Namespace: ctrlSvcNamespace,
-		},
+		Name:      ctrlSvcName,
+		Namespace: ctrlSvcNamespace,
 		Spec: corev1.ServiceSpec{
 			Ports: []corev1.ServicePort{
 				{
@@ -294,19 +305,18 @@ func makeService() *corev1.Service {
 	}
 }
 
-func makeEndpoints() *corev1.Endpoints {
-	return &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ctrlSvcName,
-			Namespace: ctrlSvcNamespace,
+func makeEndpointSlice() *discoveryv1.EndpointSlice {
+	return &discoveryv1.EndpointSlice{
+		Name:      ctrlSvcName + "-slice",
+		Namespace: ctrlSvcNamespace,
+		Labels: map[string]string{
+			"kubernetes.io/service-name": ctrlSvcName,
 		},
-		Subsets: []corev1.EndpointSubset{
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints: []discoveryv1.Endpoint{
 			{
-				Addresses: []corev1.EndpointAddress{
-					{
-						IP: "1.2.3.4",
-					},
-				},
+				Addresses:  []string{"1.2.3.4"},
+				Conditions: discoveryv1.EndpointConditions{Ready: new(true)},
 			},
 		},
 	}
@@ -317,9 +327,9 @@ func makeDefaultTestcase() *testCase {
 		assert: func() {
 			// this is a noop by default
 		},
-		vwc:       makeValidatingWebhookConfig(),
-		secret:    makeSecret(),
-		service:   makeService(),
-		endpoints: makeEndpoints(),
+		vwc:           makeValidatingWebhookConfig(),
+		secret:        makeSecret(),
+		service:       makeService(),
+		endpointSlice: makeEndpointSlice(),
 	}
 }

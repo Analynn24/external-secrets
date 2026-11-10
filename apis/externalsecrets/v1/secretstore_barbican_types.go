@@ -1,0 +1,96 @@
+/*
+Copyright © The ESO Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1
+
+import (
+	esmeta "github.com/external-secrets/external-secrets/apis/meta/v1"
+)
+
+// BarbicanAuthType defines the authentication method used by the Barbican provider.
+// +kubebuilder:validation:Enum=password;applicationCredential
+type BarbicanAuthType string
+
+const (
+	// BarbicanAuthTypePassword uses username/password Keystone authentication.
+	BarbicanAuthTypePassword BarbicanAuthType = "password"
+	// BarbicanAuthTypeApplicationCredential uses OpenStack Application Credentials.
+	BarbicanAuthTypeApplicationCredential BarbicanAuthType = "applicationCredential"
+)
+
+// BarbicanProviderUsernameRef defines a reference to a secret containing username for the Barbican provider.
+// +kubebuilder:validation:MinProperties=1
+// +kubebuilder:validation:MaxProperties=1
+type BarbicanProviderUsernameRef struct {
+	// +kubebuilder:validation:MinLength:=1
+	Value     string                    `json:"value,omitempty"`
+	SecretRef *esmeta.SecretKeySelector `json:"secretRef,omitempty"`
+}
+
+// BarbicanProviderPasswordRef defines a reference to a secret containing password for the Barbican provider.
+type BarbicanProviderPasswordRef struct {
+	SecretRef *esmeta.SecretKeySelector `json:"secretRef"`
+}
+
+// BarbicanProviderAppCredIDRef defines a reference to an Application Credential ID.
+// +kubebuilder:validation:MinProperties=1
+// +kubebuilder:validation:MaxProperties=1
+type BarbicanProviderAppCredIDRef struct {
+	// +kubebuilder:validation:MinLength:=1
+	Value     string                    `json:"value,omitempty"`
+	SecretRef *esmeta.SecretKeySelector `json:"secretRef,omitempty"`
+}
+
+// BarbicanProviderAppCredSecretRef defines a reference to an Application Credential Secret.
+type BarbicanProviderAppCredSecretRef struct {
+	SecretRef *esmeta.SecretKeySelector `json:"secretRef"`
+}
+
+// BarbicanProvider setup a store to sync secrets with barbican.
+type BarbicanProvider struct {
+	AuthURL    string       `json:"authURL,omitempty"`
+	TenantName string       `json:"tenantName,omitempty"`
+	DomainName string       `json:"domainName,omitempty"`
+	Region     string       `json:"region,omitempty"`
+	Auth       BarbicanAuth `json:"auth"`
+}
+
+// BarbicanAuth contains the authentication information for Barbican.
+// +kubebuilder:validation:XValidation:rule="(has(self.authType) && self.authType == 'applicationCredential') || (has(self.username) && has(self.password))",message="password auth requires both username and password"
+// +kubebuilder:validation:XValidation:rule="self.authType != 'applicationCredential' || (has(self.applicationCredentialID) && has(self.applicationCredentialSecret))",message="applicationCredential auth requires both applicationCredentialID and applicationCredentialSecret"
+// +kubebuilder:validation:XValidation:rule="(has(self.authType) && self.authType == 'applicationCredential') || (!has(self.applicationCredentialID) && !has(self.applicationCredentialSecret))",message="password auth should not include applicationCredential fields"
+// +kubebuilder:validation:XValidation:rule="self.authType != 'applicationCredential' || (!has(self.username) && !has(self.password))",message="applicationCredential auth should not include password fields"
+type BarbicanAuth struct {
+	// AuthType selects how Barbican authenticates.
+	// - "password": use username and password.
+	// - "applicationCredential": use application credential ID and secret.
+	// Defaults to "password".
+	// +optional
+	// +kubebuilder:default="password"
+	AuthType *BarbicanAuthType `json:"authType,omitempty"`
+
+	// Username / Password authentication fields.
+	// +optional
+	Username *BarbicanProviderUsernameRef `json:"username,omitempty"`
+	// +optional
+	Password *BarbicanProviderPasswordRef `json:"password,omitempty"`
+
+	// ID of the application credential used for authentication.
+	// +optional
+	ApplicationCredentialID *BarbicanProviderAppCredIDRef `json:"applicationCredentialID,omitempty"`
+	// +optional
+	ApplicationCredentialSecret *BarbicanProviderAppCredSecretRef `json:"applicationCredentialSecret,omitempty"`
+}

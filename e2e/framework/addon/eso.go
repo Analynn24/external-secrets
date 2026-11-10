@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +18,8 @@ package addon
 
 import (
 	"os"
+	"path/filepath"
+	"time"
 
 	// nolint
 	. "github.com/onsi/ginkgo/v2"
@@ -25,14 +29,16 @@ type ESO struct {
 	*HelmChart
 }
 
-const installCRDsVar = "installCRDs"
+const (
+	installCRDsVar = "installCRDs"
+)
 
 func NewESO(mutators ...MutationFunc) *ESO {
 	eso := &ESO{
 		&HelmChart{
 			Namespace:   "default",
 			ReleaseName: "eso",
-			Chart:       "/k8s/deploy/charts/external-secrets",
+			Chart:       filepath.Join(AssetDir(), "deploy/charts/external-secrets"),
 			Vars: []StringTuple{
 				{
 					Key:   "webhook.port",
@@ -63,11 +69,7 @@ func NewESO(mutators ...MutationFunc) *ESO {
 					Value: "100",
 				},
 				{
-					Key:   "extraArgs.experimental-enable-vault-token-cache",
-					Value: "true",
-				},
-				{
-					Key:   "extraArgs.experimental-enable-aws-session-cache",
+					Key:   "extraArgs.enable-vault-token-cache",
 					Value: "true",
 				},
 			},
@@ -159,6 +161,39 @@ func WithCRDs() MutationFunc {
 	}
 }
 
+func WithAllowGenericTargets() MutationFunc {
+	return func(eso *ESO) {
+		eso.HelmChart.Vars = append(eso.HelmChart.Vars, StringTuple{
+			Key:   "genericTargets.enabled",
+			Value: "true",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].apiGroup",
+			Value: "",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].resources[0]",
+			Value: "configmaps",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].verbs[0]",
+			Value: "create",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].verbs[1]",
+			Value: "delete",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].verbs[2]",
+			Value: "list",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].verbs[3]",
+			Value: "get",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].verbs[4]",
+			Value: "patch",
+		}, StringTuple{
+			Key:   "genericTargets.resources[0].verbs[5]",
+			Value: "watch",
+		})
+	}
+}
+
 func (l *ESO) Install() error {
 	By("Installing eso\n")
 	err := l.HelmChart.Install()
@@ -170,13 +205,23 @@ func (l *ESO) Install() error {
 }
 
 func (l *ESO) Uninstall() error {
+	// uninstalling CRDs will trigger the deletion of all CRs. They block the deletion of the CRDs if
+	// a finalizer is present.
+	// We must uninstall the CRDs before the eso chart,
+	// otherwise ESO will not remove the finalizer.
+	if l.HelmChart.HasVar(installCRDsVar, "true") {
+		By("Uninstalling eso CRDs")
+		err := uninstallCRDs(l.config)
+		if err != nil {
+			return err
+		}
+		// Give ESO a grace period to clean up the CRs
+		<-time.After(time.Minute)
+	}
 	By("Uninstalling eso")
 	err := l.HelmChart.Uninstall()
 	if err != nil {
 		return err
-	}
-	if l.HelmChart.HasVar(installCRDsVar, "true") {
-		return uninstallCRDs(l.config)
 	}
 	return nil
 }

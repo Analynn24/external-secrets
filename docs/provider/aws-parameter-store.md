@@ -21,6 +21,8 @@ way users of the `SecretStore` can only access the secrets necessary.
 
 ### IAM Policy
 
+#### Fetching Parameters
+
 The example policy below shows the minimum required permissions for fetching SSM parameters. This policy permits pinning down access to secrets with a path matching `dev-*`. Other operations may require additional permission. For example, finding parameters based on tags will also require `ssm:DescribeParameters` and `tag:GetResources` permission with `"Resource": "*"`. Generally, the specific permission required will be logged as an error if an operation fails.
 
 For further information see [AWS Documentation](https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-access.html).
@@ -40,11 +42,29 @@ For further information see [AWS Documentation](https://docs.aws.amazon.com/syst
 }
 ```
 
+#### Pushing Parameters
+
+The example policy below shows the minimum required permissions for pushing SSM parameters. Like with the fetching policy it restricts the path in which it can push secrets too.
+
+``` json
+{
+    "Action": [
+        "ssm:GetParameter*",
+        "ssm:PutParameter*",
+        "ssm:AddTagsToResource",
+        "ssm:ListTagsForResource"
+    ],
+    "Effect": "Allow",
+    "Resource": "arn:aws:ssm:us-east-2:1234567889911:parameter/dev-*"
+}
+```
+
 ### JSON Secret Values
 
 You can store JSON objects in a parameter. You can access nested values or arrays using [gjson syntax](https://github.com/tidwall/gjson/blob/master/SYNTAX.md):
 
 Consider the following JSON object that is stored in the Parameter Store key `friendslist`:
+
 ``` json
 {
   "name": {"first": "Tom", "last": "Anderson"},
@@ -57,8 +77,9 @@ Consider the following JSON object that is stored in the Parameter Store key `fr
 ```
 
 This is an example on how you would look up nested keys in the above json object:
+
 ``` yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: extract-data
@@ -87,6 +108,7 @@ spec:
       key: database-credentials
       property: dev
 ```
+
 ### Parameter Versions
 
 ParameterStore creates a new version of a parameter every time it is updated with a new value. The parameter can be referenced via the `version` property
@@ -101,9 +123,30 @@ The SetSecret method for the Parameter Store allows the user to set the value st
 {% include "full-pushsecret.yaml" %}
 ```
 
+#### Additional Metadata for PushSecret
+
+Optionally, it is possible to configure additional options for the parameter. These are as follows:
+
+- type
+- keyID
+- tier & policies
+- encodeAsDecoded
+
+To control this behaviour you can set the following provider's `metadata`:
+
+```yaml
+{% include 'aws-pm-push-secret-with-metadata.yaml' %}
+```
+
+- `secretType` takes three options. `String`, `StringList`, and `SecureString`, where `String` is the _default_
+- `kmsKeyID` takes a KMS Key `$ID` or `$ARN` (in case a key source is created in another account) as a string, where `alias/aws/ssm` is the _default_. This property is only used if `secretType` is set as `SecureString`.
+- tier & policies contains advanced policy configs such as `ExpirationNotification`.
+- encodeAsDecoded if set to true will get the secrets and push them as plain values when pushing the entire secret (instead of encoding them)
+instead of base64 encoding the []byte values from the secret.
+
 #### Check successful secret sync
 
-To be able to check that the secret has been succesfully synced you can run the following command:
+To be able to check that the secret has been successfully synced you can run the following command:
 
 ```bash
 kubectl get pushsecret pushsecret-example
@@ -137,4 +180,6 @@ You should see something similar to the following output:
 }
 ```
 
---8<-- "snippets/provider-aws-access.md"
+## Authentication
+
+See [AWS Authentication](aws-access.md) for all supported methods: controller pod identity, IRSA, static credentials, session tokens, assuming roles, session tags, and remote key prefixes.

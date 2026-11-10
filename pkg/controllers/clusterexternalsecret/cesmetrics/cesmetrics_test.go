@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,9 +22,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	esv1beta1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1beta1"
+	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
 	"github.com/external-secrets/external-secrets/pkg/controllers/metrics"
 )
 
@@ -38,7 +39,7 @@ func TestUpdateClusterExternalSecretCondition(t *testing.T) {
 
 	tests := []struct {
 		desc           string
-		condition      *esv1beta1.ClusterExternalSecretStatusCondition
+		condition      *esv1.ClusterExternalSecretStatusCondition
 		expectedCount  int
 		expectedValues []struct {
 			labels        prometheus.Labels
@@ -47,8 +48,8 @@ func TestUpdateClusterExternalSecretCondition(t *testing.T) {
 	}{
 		{
 			desc: "ConditionTrue",
-			condition: &esv1beta1.ClusterExternalSecretStatusCondition{
-				Type:   esv1beta1.ClusterExternalSecretReady,
+			condition: &esv1.ClusterExternalSecretStatusCondition{
+				Type:   esv1.ClusterExternalSecretReady,
 				Status: v1.ConditionTrue,
 			},
 			expectedValues: []struct {
@@ -77,8 +78,8 @@ func TestUpdateClusterExternalSecretCondition(t *testing.T) {
 		},
 		{
 			desc: "ConditionFalse",
-			condition: &esv1beta1.ClusterExternalSecretStatusCondition{
-				Type:   esv1beta1.ClusterExternalSecretReady,
+			condition: &esv1.ClusterExternalSecretStatusCondition{
+				Type:   esv1.ClusterExternalSecretReady,
 				Status: v1.ConditionFalse,
 			},
 		},
@@ -86,10 +87,8 @@ func TestUpdateClusterExternalSecretCondition(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
-			ces := &esv1beta1.ClusterExternalSecret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: name,
-				},
+			ces := &esv1.ClusterExternalSecret{
+				Name: name,
 			}
 
 			// Evacuate the original gauge vec

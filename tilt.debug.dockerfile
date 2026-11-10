@@ -1,10 +1,11 @@
-FROM golang:1.21.6@sha256:76aadd914a29a2ee7a6b0f3389bb2fdb87727291d688e1d972abe6c0fa6f2ee0
+# Pinned release: golang:1.27.3 (Go; tracking 1.x)
+FROM golang@sha256:f20d83a83e18dbd2a4714b8ffd4b30b287b6243962dd75608e86abcc63ba4efc
 WORKDIR /
 COPY ./bin/external-secrets /external-secrets
+COPY ./bin/dlv /dlv
 
-RUN go install github.com/go-delve/delve/cmd/dlv@v1.22.0
-RUN chmod +x /go/bin/dlv
-RUN mv /go/bin/dlv /
+ENV HOME=/tmp
+USER 1000:1000
 
 EXPOSE 30000
 

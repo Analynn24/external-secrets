@@ -1,0 +1,34 @@
+name: CRDs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apis/**'
+  pull_request:
+    paths:
+      - 'apis/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  crd-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Generate crds for testing
+        run: make crds.generate.tests
+
+      - name: Run crd tests
+        run: make test.crds

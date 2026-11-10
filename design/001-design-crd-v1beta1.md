@@ -4,7 +4,7 @@ title: External Secrets CRD promotion
 version: v1beta1
 authors: all of us
 creation-date: 2022-feb-08
-status: approved
+status: implemented
 ---
 ```
 
@@ -38,7 +38,7 @@ This design documentation aims to capture some final changes for ExternalSecrets
 ### Goals
 
 - Define a beta CRD
-- Define strucutre for getting all provider secrets
+- Define structure for getting all provider secrets
 - Define structure for new templating engine
 ### Non-Goals
 
@@ -96,7 +96,7 @@ spec:
       data:
         config.yml: |
           endpoints:
-          - https://{{ .data.user }}:{{ .data.password }}@api.exmaple.com
+          - https://{{ .data.user }}:{{ .data.password }}@api.example.com
 
       templateFrom:
       - configMap:

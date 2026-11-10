@@ -1,13 +1,23 @@
 MAKEFLAGS   += --warn-undefined-variables
-SHELL       := /bin/bash
+SHELL       := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c
 
-KIND_IMG       = "kindest/node:v1.24.2@sha256:1f0cee2282f43150b52dc7933183ed96abdcfc8d293f30ec07082495874876f1"
+KIND_IMG       = "kindest/node:v1.33.4@sha256:25a6018e48dfcaee478f4a59af81157a437f15e6e140bf103f85a2e7cd0cbbf2"
 DOCKER_BUILD_ARGS     ?=
 
 export E2E_IMAGE_NAME ?= ghcr.io/external-secrets/external-secrets-e2e
 export GINKGO_LABELS ?= !managed
 export TEST_SUITES ?= provider generator flux argocd
+# Leave the global addons installed on the way out. Only for a cluster you are
+# about to delete. Off by default; CI sets it per leg.
+export E2E_SKIP_GLOBAL_TEARDOWN ?=
+
+export OCI_IMAGE_NAME = ghcr.io/external-secrets/external-secrets
+
+# Directory where test.build writes the docker-saved image tarballs and where
+# test.run loads them from. Lets CI hand images between a build job and a
+# separate test job as artifacts instead of rebuilding on the test runner.
+E2E_ARTIFACT_DIR ?= $(shell pwd)/image-artifacts
 
 start-kind: ## Start kind cluster
 	kind create cluster \
@@ -16,41 +26,68 @@ start-kind: ## Start kind cluster
 	  --retain \
 	  --image "$(KIND_IMG)"
 
-test: e2e-image ## Run e2e tests against current kube context
+stop-kind: ## Stop kind cluster
+	kind delete cluster \
+		--name external-secrets \
+
+test: ## Build images and run the e2e suite on the current runner (local convenience)
+	$(MAKE) test.build
+	$(MAKE) test.run
+
+test.build: e2e-image ## Build the e2e + controller images and export them as tarballs
 	$(MAKE) -C ../ docker.build \
-		IMAGE_NAME=$(IMAGE_NAME) \
+		IMAGE_NAME=$(OCI_IMAGE_NAME) \
 		VERSION=$(VERSION) \
 		ARCH=amd64 \
 		DOCKER_BUILD_ARGS="${DOCKER_BUILD_ARGS} --build-arg TARGETARCH=amd64 --build-arg TARGETOS=linux"
-	kind load docker-image --name="external-secrets" $(IMAGE_NAME):$(VERSION)
-	kind load docker-image --name="external-secrets" $(E2E_IMAGE_NAME):$(VERSION)
+	mkdir -p $(E2E_ARTIFACT_DIR)
+	docker save -o $(E2E_ARTIFACT_DIR)/eso.tar $(OCI_IMAGE_NAME):$(VERSION)
+	docker save -o $(E2E_ARTIFACT_DIR)/e2e.tar $(E2E_IMAGE_NAME):$(VERSION)
+
+test.run: ## Load prebuilt image tarballs into kind and run the e2e suite
+	kind load image-archive --name="external-secrets" $(E2E_ARTIFACT_DIR)/eso.tar
+	kind load image-archive --name="external-secrets" $(E2E_ARTIFACT_DIR)/e2e.tar
 	./run.sh
 
+# Runs against the current kube context, which is not ours to leave dirty.
+# override beats both an inherited and a command-line value.
+test.managed: override E2E_SKIP_GLOBAL_TEARDOWN =
 test.managed: e2e-image ## Run e2e tests against current kube context
 	$(MAKE) -C ../ docker.build \
 		VERSION=$(VERSION) \
 		ARCH=amd64 \
 		DOCKER_BUILD_ARGS="${DOCKER_BUILD_ARGS} --build-arg TARGETARCH=amd64 --build-arg TARGETOS=linux"
+	$(MAKE) -C ../ docker.build \
+		IMAGE_NAME=$(OCI_IMAGE_NAME) \
+		VERSION=$(VERSION) \
+		ARCH=amd64 \
+		DOCKER_BUILD_ARGS="${DOCKER_BUILD_ARGS} --build-arg TARGETARCH=amd64 --build-arg TARGETOS=linux"
 	$(MAKE) -C ../ docker.push \
+		VERSION=$(VERSION)
+	$(MAKE) -C ../ docker.push \
+		IMAGE_NAME=$(OCI_IMAGE_NAME) \
 		VERSION=$(VERSION)
 	$(MAKE) -C ../ docker.push \
 		IMAGE_NAME=$(E2E_IMAGE_NAME) \
 		VERSION=$(VERSION)
 	./run.sh
 
-e2e-bin:
-	CGO_ENABLED=0 go run github.com/onsi/ginkgo/v2/ginkgo build ./suites/...
 
-e2e-image:
+matrix.check: ## Validate matrix.yaml (coverage, secret scoping consistency)
+	./matrix.py check
+
+matrix.plan: ## Show the credential env vars each enabled e2e leg receives
+	./matrix.py plan
+
+e2e-bin:
+	GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go tool ginkgo build ./suites/...
+
+e2e-image: e2e-bin
 	-rm -rf ./k8s/deploy
 	mkdir -p k8s
 	$(MAKE) -C ../ helm.generate
 	cp -r ../deploy ./k8s
 	docker build $(DOCKER_BUILD_ARGS) -t $(E2E_IMAGE_NAME):$(VERSION) -f Dockerfile ..
-
-stop-kind: ## Stop kind cluster
-	kind delete cluster \
-		--name external-secrets \
 
 help: ## displays this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_\/-]+:.*?## / {printf "\033[34m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST) | \

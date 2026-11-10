@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,7 +32,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	esv1beta1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1beta1"
+	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
+	ctrlcommon "github.com/external-secrets/external-secrets/pkg/controllers/common"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
@@ -65,7 +69,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 	Expect(cfg).ToNot(BeNil())
 
-	err = esv1beta1.AddToScheme(scheme.Scheme)
+	err = esv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -89,6 +93,7 @@ var _ = BeforeSuite(func() {
 		RequeueInterval: time.Second,
 	}).SetupWithManager(k8sManager, controller.Options{
 		MaxConcurrentReconciles: 1,
+		RateLimiter:             ctrlcommon.BuildRateLimiter(),
 	})
 	Expect(err).ToNot(HaveOccurred())
 

@@ -1,126 +1,227 @@
+version: "2"
+
 run:
   timeout: 10m
-
-linters-settings:
-  gci:
-    local-prefixes: github.com/external-secrets/external-secrets
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-    disabled-checks:
-      - dupImport
-      - ifElseChain
-      - octalLiteral
-      - whyNoLint
-      - wrapperFunc
-      - importShadow
-      - unnamedResult
-      - unnecessaryBlock
-    settings:
-      rangeValCopy:
-        sizeThreshold: 512
-      hugeParam:
-        sizeThreshold: 512
-  gocyclo:
-    min-complexity: 16
-  goheader:
-    template-path: ./hack/boilerplate.go.txt
-  dupl:
-    threshold: 200
-  govet:
-    check-shadowing: false
-  lll:
-    line-length: 300
-  misspell:
-    locale: US
+  allow-parallel-runners: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - asciicheck
     - bodyclose
+    - depguard
     - dogsled
     - dupl
     - errcheck
     - errorlint
     - exhaustive
-    - exportloopref
-    - gci
+    - copyloopvar
     - goheader
-    - goconst
     - gocritic
     - godot
-    - gofmt
     - goprintffuncname
     - gosec
-    - gosimple
     - govet
     - ineffassign
-    - lll
     - misspell
+    - modernize # A suite of analyzers that suggest simplifications to Go code, using modern language and library features. https://golangci-lint.run/docs/linters/configuration/#modernize
     - nakedret
     - nolintlint
     - prealloc
-    - revive
-    - staticcheck
-    - stylecheck
-    - typecheck
+    - lll
     - unconvert
     - unparam
     - unused
     - whitespace
+    - revive
+  settings:
+    depguard:
+      rules:
+        apis:
+          files:
+            - "**/apis/**/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/external-secrets/external-secrets/apis
+            - github.com/google/go-cmp
+            - github.com/stretchr/testify
+            - k8s.io/api
+            - k8s.io/apiextensions-apiserver
+            - k8s.io/apimachinery
+            - sigs.k8s.io/controller-runtime
+        runtime:
+          files:
+            - "**/runtime/**/*.go"
+          list-mode: strict
+          allow:
+            - $gostd
+            - dario.cat/mergo
+            - github.com/Masterminds/goutils
+            - github.com/Masterminds/semver/v3
+            - github.com/external-secrets/external-secrets/apis
+            - github.com/external-secrets/external-secrets/runtime
+            - github.com/go-logr/logr
+            - github.com/google/go-cmp
+            - github.com/google/uuid
+            - github.com/hashicorp/golang-lru
+            - github.com/huandu/xstrings
+            - github.com/lestrrat-go/jwx/v2
+            - github.com/mitchellh/copystructure
+            - github.com/prometheus/client_golang
+            - github.com/shopspring/decimal
+            - github.com/spf13/cast
+            - github.com/spf13/pflag
+            - github.com/stretchr/testify
+            - golang.org/x/crypto
+            - k8s.io/api
+            - k8s.io/apiextensions-apiserver
+            - k8s.io/apimachinery
+            - k8s.io/client-go
+            - sigs.k8s.io/controller-runtime
+            - sigs.k8s.io/yaml
+            - software.sslmate.com/src/go-pkcs12
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+      disabled-checks:
+        - dupImport
+        - ifElseChain
+        - octalLiteral
+        - whyNoLint
+        - wrapperFunc
+        - importShadow
+        - unnamedResult
+        - unnecessaryBlock
+      settings:
+        rangeValCopy:
+          sizeThreshold: 512
+        hugeParam:
+          sizeThreshold: 512
+    gocyclo:
+      min-complexity: 16
+    goheader:
+      template-path: ${config-path}/hack/boilerplate.go.txt
+    dupl:
+      threshold: 200
+    govet:
+      disable:
+        - shadow
+    lll:
+      line-length: 300
+    #    staticcheck:
+    #      checks:
+    #        - QF1008
+    misspell:
+      locale: US
+    modernize:
+      disable:
+        - omitzero
+  exclusions:
+    rules:
+      # The in-tree sprig copy is excluded from legacy checks, but module boundaries still apply.
+      - path: runtime/template/v2/sprig
+        linters:
+          - asciicheck
+          - bodyclose
+          - copyloopvar
+          - dogsled
+          - dupl
+          - errcheck
+          - errorlint
+          - exhaustive
+          - gocritic
+          - godot
+          - goheader
+          - goprintffuncname
+          - gosec
+          - govet
+          - ineffassign
+          - lll
+          - misspell
+          - modernize
+          - nakedret
+          - nolintlint
+          - prealloc
+          - revive
+          - unconvert
+          - unparam
+          - unused
+          - whitespace
 
-service:
-  golangci-lint-version: 1.33.x
+      # Exclude some linters from running on tests files.
+      - path: _test(ing)?\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - unparam
+          - lll
+          - revive
 
+      # Allow dot imports for Ginkgo and Gomega in test files
+      - path: _test\.go
+        text: "dot-imports:"
+        linters:
+          - revive
+
+      # Ease some gocritic warnings on test files.
+      - path: _test\.go
+        text: "(unnamedResult|exitAfterDefer)"
+        linters:
+          - gocritic
+
+      # Exclude fake or mock packages from revive linter
+      - path: /(fake|mock)/
+        linters:
+          - revive
+
+      # This is a "potential hardcoded credentials" warning. It's triggered by
+      # any variable with 'secret' in the same, and thus hits a lot of false
+      # positives in Kubernetes land where a Secret is an object type.
+      - text: "G101:"
+        linters:
+          - gosec
+
+      # The header check doesn't correctly parse the header as a code comment and is
+      # triggered by the perceived diff. The header check still correctly detects missing
+      # license headers and is useful for some cases.
+      - text: "Actual:"
+        linters:
+          - goheader
 issues:
-  # Excluding configuration per-path and per-linter
-  exclude-rules:
-    # Exclude some linters from running on tests files.
-    - path: _test(ing)?\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - gosec
-        - unparam
-        - lll
-
-    # Ease some gocritic warnings on test files.
-    - path: _test\.go
-      text: "(unnamedResult|exitAfterDefer)"
-      linters:
-        - gocritic
-
-    # This is a "potential hardcoded credentials" warning. It's triggered by
-    # any variable with 'secret' in the same, and thus hits a lot of false
-    # positives in Kubernetes land where a Secret is an object type.
-    - text: "G101:"
-      linters:
-        - gosec
-
-    # The header check doesn't correctly parse the header as a code comment and is
-    # triggered by the perceived diff. The header check still correctly detects missing
-    # license headers and is useful for some cases.
-    - text: "Actual:"
-      linters:
-        - goheader
-
-    # excluding deprecation check introduced on purpose in #2884
-    - path: pkg/provider/fake/fake.go
-      text: 'SA1019: data.ValueMap is deprecated: ValueMap is deprecated and is intended to be removed in the future, use the `value` field instead.'
-    - path: pkg/provider/fake/fake_test.go
-      text: 'SA1019: data.ValueMap is deprecated: ValueMap is deprecated and is intended to be removed in the future, use the `value` field instead.'
-
   # Maximum issues count per one linter. Set to 0 to disable. Default is 50.
-  max-per-linter: 0
+  max-issues-per-linter: 0
 
   # Maximum count of issues with the same text. Set to 0 to disable. Default is 3.
   max-same-issues: 0
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - goimports
+    - golines
+  exclusions:
+    paths:
+      - runtime/template/v2/sprig
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/external-secrets/external-secrets
+    golines:
+      # Target maximum line length.
+      # Default: 100
+      max-len: 200
+    gci:
+      sections:
+        - "standard"
+        - "default"
+        - "prefix(github.com/external-secrets/external-secrets)"
+        - "blank"
+        - "dot"

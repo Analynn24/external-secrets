@@ -7,7 +7,6 @@ on:
   workflow_dispatch:
     inputs: {}
 
-
 permissions:
   contents: read
 
@@ -15,20 +14,24 @@ jobs:
   branches:
     name: get branch data
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       branches: ${{ steps.branches.outputs.branches }}
 
     steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.inputs.ref }}
+          persist-credentials: false
       - name: set branches output
         id: branches
-        # outputs the second to most recent `release-x.y` branches plus `main` as JSON
-        run: |
-          echo "branches=$(git branch -a | grep -E "remotes/origin/(main|release-)" | sed 's/  remotes\/origin\///' | sort -V | tail -2 | head -1 | jq -R -s -c 'split("\n") | map(select(length > 0)) | . + ["main"]')" >> $GITHUB_OUTPUT
+        run: echo "branches=[\"main\"]" >> $GITHUB_OUTPUT
 
   update-dependencies:
     permissions:
@@ -39,31 +42,46 @@ jobs:
       matrix:
         branch: ${{ fromJson(needs.branches.outputs.branches) }}
     steps:
-    - name: Setup Go
-      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+    - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
       with:
-        go-version: "1.21"
+        egress-policy: audit
 
       # we can not use the default GHA token, as it prevents subsequent GHA
       # from running: we can create a PR but the tests won't run :/
     - name: Generate token
       id: generate_token
-      uses: tibdex/github-app-token@3beb63f4bd073e61482598c45c71c1019b59b73a # v2.1.0
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      env:
+        APP_ID: ${{ secrets.APP_ID }}
       with:
-        app_id: ${{ secrets.APP_ID }}
-        private_key: ${{ secrets.PRIVATE_KEY }}
-    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        app-id: ${{ env.APP_ID }}
+        private-key: ${{ secrets.PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         token: ${{ steps.generate_token.outputs.token }}
         ref: ${{ matrix.branch }}
         fetch-depth: 0
+        persist-credentials: false
+
+    - name: Setup Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+
     - name: create pull request
+      env:
+        BASE_BRANCH: ${{ matrix.branch }}
+        GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+        GH_REPO: ${{ github.repository }}
       run: |
         git config --global user.email "ExternalSecretsOperator@users.noreply.github.com"
         git config --global user.name "External Secrets Operator"
+        git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GH_REPO}.git"
         BRANCH=update-deps-$(date "+%s")
         make update-deps || true
-
+        make check-diff || true
         if git diff-index --quiet HEAD --; then
           echo "nothing changed. skipping."
           exit 0;
@@ -73,6 +91,4 @@ jobs:
         git add -A
         git commit -m "update dependencies" -s
         git push origin $BRANCH
-        gh pr create -B ${{ matrix.branch }} -H ${BRANCH} --title 'chore: update dependencies' --body 'Update dependencies'
-      env:
-        GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+        gh pr create -B $BASE_BRANCH -H ${BRANCH} --title 'chore: update dependencies' --body 'Update dependencies'

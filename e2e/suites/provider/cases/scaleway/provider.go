@@ -1,9 +1,25 @@
+/*
+Copyright © The ESO Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package scaleway
 
 import (
 	"github.com/external-secrets/external-secrets-e2e/framework"
 	"github.com/onsi/gomega"
-	smapi "github.com/scaleway/scaleway-sdk-go/api/secret/v1alpha1"
+	smapi "github.com/scaleway/scaleway-sdk-go/api/secret/v1beta1"
 	"github.com/scaleway/scaleway-sdk-go/scw"
 )
 
@@ -52,7 +68,7 @@ func (p *secretStoreProvider) cleanup() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		}
 
-		if uint32(len(listResp.Secrets)) == listResp.TotalCount {
+		if uint64(len(listResp.Secrets)) == listResp.TotalCount {
 			break
 		}
 	}

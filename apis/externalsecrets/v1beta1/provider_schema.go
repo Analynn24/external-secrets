@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +18,7 @@ package v1beta1
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -73,6 +76,9 @@ func GetProvider(s GenericStore) (Provider, error) {
 	}
 	spec := s.GetSpec()
 	if spec == nil {
+		// Note, this condition can never be reached, because
+		// the Spec is not a pointer in Kubernetes. It will
+		// always exist.
 		return nil, fmt.Errorf("no spec found in %#v", s)
 	}
 	storeName, err := getProviderName(spec.Provider)
@@ -99,7 +105,7 @@ func getProviderName(storeSpec *SecretStoreProvider) (string, error) {
 		return "", fmt.Errorf("failed to marshal store spec: %w", err)
 	}
 
-	storeMap := make(map[string]interface{})
+	storeMap := make(map[string]any)
 	err = json.Unmarshal(storeBytes, &storeMap)
 	if err != nil {
 		return "", fmt.Errorf("failed to unmarshal store spec: %w", err)
@@ -113,5 +119,5 @@ func getProviderName(storeSpec *SecretStoreProvider) (string, error) {
 		return k, nil
 	}
 
-	return "", fmt.Errorf("failed to find registered store backend")
+	return "", errors.New("failed to find registered store backend")
 }

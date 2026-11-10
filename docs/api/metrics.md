@@ -26,6 +26,12 @@ The Operator has [the controller-runtime metrics inherited from kubebuilder](htt
 | `externalsecret_status_condition`              | Gauge     | The status condition of a specific External Secret                                                                                                                                                                      |
 | `externalsecret_reconcile_duration`            | Gauge     | The duration time to reconcile the External Secret                                                                                                                                                                      |
 
+## Push Secret Metrics
+| Name                                    | Type  | Description                                             |
+|-----------------------------------------|-------|---------------------------------------------------------|
+| `pushsecret_status_condition`   | Gauge | The status condition of a specific Push Secret |
+| `pushsecret_reconcile_duration` | Gauge | The duration time to reconcile the Push Secret |
+
 ## Cluster Secret Store Metrics
 | Name                                    | Type  | Description                                             |
 |-----------------------------------------|-------|---------------------------------------------------------|
@@ -97,7 +103,7 @@ histogram_quantile(0.99,
 ```
 
 #### Controller Reconcile Error
-The controller should be able to reconcile resources without errors. When errors occurr secret delivery may be impacted which could cascade down to the secret consuming applications.
+The controller should be able to reconcile resources without errors. When errors occur secret delivery may be impacted which could cascade down to the secret consuming applications.
 
 ```
 sum(increase(

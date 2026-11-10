@@ -8,23 +8,49 @@ We have a [Roadmap](roadmap.md) to track progress for our road towards GA.
 
 Features, bugs and any issues regarding the documentation should be filed as
 [GitHub Issue](https://github.com/external-secrets/external-secrets/issues) in
-our repository. We use labels like `kind/feature`, `kind/bug`, `area/aws` to
-organize the issues. Issues labeled `good first issue` and `help wanted` are
-especially good for a first contribution. If you want to pick up an issue just
-leave a comment.
+our repository.
+
+## Issues and pull requests labels
+
+We have [our github labels](https://github.com/external-secrets/external-secrets/labels) to help classify the issues and pull requests.
+
+They are categorized as this:
+
+| Label                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                               |
+|-----------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `kind/`                     | Kinds classification allows maintainer to easily spot what the issue is about (not where is the code touched). Bugs (kind/bug), features (kind/feature), maintenance items (kind/chore, kind/refactor, kind/cleanup, kind/dependency), initiatives (kind/design), performance changes (kind/performance), support-questions (kind/support).                                                                            |
+| `triage/`                   | Triage labels tracks the issue's lifecycle (or change's lifecycle). Suggested mappings: `triage/pending-triage` (not triaged yet), `triage/needs-information` (missing details from reporter), `triage/not-reproducible` (cannot reproduce with provided info), `triage/confirmed` (valid/reproducible report), `triage/invalid` (incorrect bug report/PR), `triage/duplicate` (duplicate bug report) |
+| `priority/`                 | Priority shows an increasing urgency from "important-long-term", "important-soon" to "urgent"                                                                                                                                                                                                                                                                                                         |
+| `size/`                     | Allows maintainers to better guess the amount of work required to review the issue/PR                                                                                                                                                                                                                                                                                                                 |
+| `area/`                     | Areas allow the routing of the work (issues/PR) based on our knowledge areas. It's intent is to target specific experts in their domain. Each provider has its own area. Examples: `area/aws`, `area/azure`, `area/charts`, `area/documentation`, `area/dependencies`.                                                                                                                                |
+| `breaking-change`           | Highlights the impact on future users on the issue/change                                                                                                                                                                                                                                                                                                                                             |
+| `cncf`                      | Highlights the impact on the CNCF (foundation work, support, maturity tracking)                                                                                                                                                                                                                                                                                                                       |
+| `discuss-community-meeting` | Highlights the need to discuss this in a community meeting for consensus building                                                                                                                                                                                                                                                                                                                     |
+| `release-blocker`           | Issue/PR that block next release                                                                                                                                                                                                                                                                                                                                                                      |
+| `good-first-issue`          | An issue/PR good for newcomers. Do not hesitate to comment on it to mark your interest and tackle the work!                                                                                                                                                                                                                                                                                           |
+| `help-wanted`               | Extra attention of the maintainers team is requested                                                                                                                                                                                                                                                                                                                                                  |
+| `Stale`                     | Is used by a bot to highlight stale PRs/issues that will automatically close if no further activity happens                                                                                                                                                                                                                                                                                           |
+
+With those labels, maintainers are able to efficiently see where they can help better.
+
+Note: Some labels  like `size` and `kind` are applied automatically to Pull Requests by semantic conventions. See also the section below about submitting a pull request.
 
 ## Submitting a Pull Request
 
 This project uses the well-known pull request process from GitHub. To submit a
 pull request, fork the repository and push any changes to a branch on the copy,
-from there a pull request can be made in the main repo. Merging a pull request
-requires the following steps to be completed before the pull request will
-be merged:
+from there you can create a pull request to our main repo.
 
-* ideally, there is an issue that documents the problem or feature in depth.
-* code must have a reasonable amount of test coverage
-* tests must pass
-* PR needs be reviewed and approved
+Please note we are following the [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/#summary) .
+The use of the right semantics helps the maintaining team to classify your PR effectively.
+**We will only merge PRs matching those conventions.**
+
+Merging a pull request only happens when:
+
+* there is ideally an issue that documents the problem or feature in depth.
+* code has a reasonable amount of test coverage
+* tests pass
+* At least one review approves the change
 
 Once these steps are completed the PR will be merged by a code owner.
 We're using the pull request `assignee` feature to track who is responsible
@@ -32,13 +58,27 @@ for the lifecycle of the PR: review, merging, ping on inactivity, close.
 We close pull requests or issues if there is no response from the author for
 a period of time. Feel free to reopen if you want to get back on it.
 
+Pull requests are also closed automatically on open or reopen if their
+description has dropped a section from `.github/pull_request_template.md`.
+Fix the description from the template and reopen, or open a new pull request,
+once every section is back.
+
+_Note:_
+Pull requests that are labelled with _size/l_ and above _MUST_ have at least **TWO**
+approvers for it to be merged. Please respect this policy to ensure the quality
+of code in this project.
+
 ### Triggering e2e tests
 
 We have an extensive set of e2e tests that test the integration with *real* cloud provider APIs.
 Maintainers must trigger these kind of tests manually for PRs that come from forked repositories. These tests run inside a `kind` cluster in the GitHub Actions runner:
 
 ```
-/ok-to-test sha=xxxxxx
+/ok-to-test sha=<full_commit_hash>
+```
+Examples:
+```
+/ok-to-test sha=b8ca0040200a7a05d57048d86a972fdf833b8c9b
 ```
 
 #### Executing e2e tests locally
@@ -55,6 +95,10 @@ run managed tests.
 ```
 make test.e2e GINKGO_LABELS='gcp&&!managed'
 ```
+
+`E2E_SKIP_GLOBAL_TEARDOWN=true` leaves the ESO release installed when the suite
+finishes, saving about a minute. Only for a throwaway cluster: it applies to
+whatever your kube context points at. `make test.managed` clears it.
 
 #### Managed Kubernetes e2e tests
 
@@ -140,15 +184,7 @@ Providing support to end users is an important and difficult task.
 We have three different channels through which support questions arise:
 
 1. Kubernetes Slack [#external-secrets](https://kubernetes.slack.com/archives/C017BF84G2Y)
-2. [GitHub Discussions](https://github.com/external-secrets/external-secrets/discussions)
-3. GitHub Issues
-
-We use labels to identify GitHub Issues. Specifically for managing support cases we use the following labels to identify the state a support case is in:
-
-* `triage/needs-information`: Indicates an issue needs more information in order to work on it.
-* `triage/not-reproducible`: Indicates an issue can not be reproduced as described.
-* `triage/support`: Indicates an issue that is a support question.
-
+2. [GitHub Issues](https://github.com/external-secrets/external-secrets/issues/new/choose)
 
 ## Cutting Releases
 

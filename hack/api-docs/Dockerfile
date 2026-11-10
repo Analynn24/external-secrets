@@ -11,26 +11,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM alpine:3.19@sha256:c5b1261d6d3e43071626931fc004f70149baeba2c8ec672bd4f27761f8e1ad6b
+# Pinned release: alpine:3.24.3 (Alpine; tracking 3.x)
+FROM alpine@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 RUN apk add -U --no-cache \
-    python3 \
-    python3-dev \
-    py3-pip \
-    musl-dev \
-    git \
-    openssh \
-    git-fast-import \
     bash \
+    diffutils \
     gcc \
-    diffutils
+    git \
+    git-fast-import \
+    musl-dev \
+    openssh \
+    py3-pip \
+    python3 \
+    python3-dev
 
 ENV PATH=$PATH:/.venv/bin
-COPY requirements.txt /
+COPY build-requirements.txt requirements.txt /
 RUN python3 -m venv .venv && \
     source .venv/bin/activate && \
-    pip3 install --upgrade pip && \
-    pip3 install -r /requirements.txt
+    pip3 install --require-hashes --only-binary=:all: -r /build-requirements.txt && \
+    pip3 install --require-hashes --only-binary=:all: --no-binary=watchdog --no-build-isolation -r /requirements.txt
 
 # Disable the top-level directory owner check
 # https://github.com/git/git/commit/8959555cee7ec045958f9b6dd62e541affb7e7d9
 RUN git config --system --add safe.directory '*'
+
+# Keep the image non-root by default; the docs Makefile overrides the UID/GID
+# with the host user's IDs when bind-mounting the repository.
+ENV HOME=/tmp
+USER 1000:1000

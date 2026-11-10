@@ -25,7 +25,7 @@ Once you have created your SMC, you will get a config.json file or a base64 json
 This base64 encoded jsong string will be required to create your secretStores
 
 ## Important note about this documentation
-_**The KepeerSecurity calls the entries in vaults 'Records'. These docs use the same term.**_
+_**The KeeperSecurity calls the entries in vaults 'Records'. These docs use the same term.**_
 
 ### Update secret store
 Be sure the `keepersecurity` provider is listed in the `Kind=SecretStore`
@@ -43,7 +43,7 @@ Be sure the `keepersecurity` provider is listed in the `Kind=SecretStore`
 * How a Record is equated to an ExternalSecret:
     * `remoteRef.key` is equated to a Record's ID
     * `remoteRef.property` is equated to one of the following options:
-        * Fields: [Record's field's Type](https://docs.keeper.io/secrets-manager/secrets-manager/about/field-record-types)
+        * Fields: Record's field's Label (if present), otherwise [Record's field's Type](https://docs.keeper.io/secrets-manager/secrets-manager/about/field-record-types)
         * CustomFields: Record's field's Label
         * Files: Record's file's Name
         * If empty, defaults to the complete Record in JSON format
@@ -51,12 +51,14 @@ Be sure the `keepersecurity` provider is listed in the `Kind=SecretStore`
 * `dataFrom`:
     * `find.path` is currently not supported.
     * `find.name.regexp` is equated to one of the following options:
-        * Fields: Record's field's Type
+        * Fields: Record's field's Label (if present), otherwise Record's field's Type
         * CustomFields: Record's field's Label
         * Files: Record's file's Name
     * `find.tags` are not supported at this time.
 
 **NOTE:** For complex [types](https://docs.keeper.io/secrets-manager/secrets-manager/about/field-record-types), like name, phone, bankAccount, which does not match with a single string value, external secrets will return the complete json string. Use the json template functions to decode.
+
+**NOTE:** A record that cannot be found is reported as a missing secret, which is what `deletionPolicy: Delete` and `deletionPolicy: Merge` act on. Keeper Secrets Manager returns an empty record set both for a record that was deleted and for one that is simply no longer shared with the KSM application, and the two are indistinguishable to the provider. So with `deletionPolicy: Delete`, revoking the application's access to a record removes the key from the target Secret exactly as if the record had been deleted. Use the default `deletionPolicy: Retain` if that is not what you want.
 
 ### Creating external secret
 To create a kubernetes secret from Keeper Secret Manager secret a `Kind=ExternalSecret` is needed.
@@ -80,7 +82,7 @@ There are some limitations using this provider.
 
 ## Push Secrets
 
-Push Secret will only work with a custom KeeperSecurity Record type `ExternalSecret`
+Push Secret will only work with a custom KeeperSecurity Record type `externalSecrets`
 
 ### Behavior
 * `selector`:
@@ -99,4 +101,4 @@ To create a Keeper Security record from kubernetes a `Kind=PushSecret` is needed
 
 ### Limitations
 * Only possible to push one key per secret at the moment
-* If the record with the selected name exists but the key does not exists the record can not be updated. See [Ability to add custom fields to existing secret #17](https://github.com/Keeper-Security/secrets-manager-go/issues/17)
+* If the record with the selected name exists but the key does not exist, the record cannot be updated. See [Ability to add custom fields to existing secret #17](https://github.com/Keeper-Security/secrets-manager-go/issues/17)

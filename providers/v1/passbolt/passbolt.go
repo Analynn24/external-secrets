@@ -1,0 +1,401 @@
+/*
+Copyright © The ESO Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package passbolt implements a provider for Passbolt password manager.
+// It allows fetching secrets stored in Passbolt using their REST API.
+package passbolt
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+
+	"github.com/passbolt/go-passbolt/api"
+	"github.com/passbolt/go-passbolt/helper"
+	corev1 "k8s.io/api/core/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	kclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
+	"github.com/external-secrets/external-secrets/runtime/esutils"
+	"github.com/external-secrets/external-secrets/runtime/esutils/resolvers"
+)
+
+var log = ctrl.Log.WithName("provider").WithName("passbolt")
+
+var errPassboltCustomFieldNotFound = errors.New("custom field not found")
+
+const (
+	customFieldPrefix = "custom_fields."
+
+	errPassboltStoreMissingProvider                = "missing: spec.provider.passbolt"
+	errPassboltStoreMissingAuth                    = "missing: spec.provider.passbolt.auth"
+	errPassboltStoreMissingAuthPassword            = "missing: spec.provider.passbolt.auth.passwordSecretRef"
+	errPassboltStoreMissingAuthPrivateKey          = "missing: spec.provider.passbolt.auth.privateKeySecretRef"
+	errPassboltStoreMissingHost                    = "missing: spec.provider.passbolt.host"
+	errPassboltExternalSecretMissingFindNameRegExp = "missing: find.name.regexp"
+	errPassboltStoreHostSchemeNotHTTPS             = "host Url has to be https scheme"
+	errPassboltSecretPropertyInvalid               = "property must be one of name, username, uri, password, description, or " + customFieldPrefix + "<name>"
+	errPassboltCAInvalid                           = "failed to parse CA certificate for Passbolt provider"
+	errPassboltUnexpectedTransport                 = "unexpected default http transport type"
+	errNotImplemented                              = "not implemented"
+)
+
+// ProviderPassbolt implements the External Secrets provider interface for Passbolt.
+type ProviderPassbolt struct {
+	client *api.Client
+}
+
+// Capabilities return the provider supported capabilities (ReadOnly, WriteOnly, ReadWrite).
+func (provider *ProviderPassbolt) Capabilities() esv1.SecretStoreCapabilities {
+	return esv1.SecretStoreReadOnly
+}
+
+// NewClient constructs a new secrets client based on the provided store.
+func (provider *ProviderPassbolt) NewClient(ctx context.Context, store esv1.GenericStore, kube kclient.Client, namespace string) (esv1.SecretsClient, error) {
+	config := store.GetSpec().Provider.Passbolt
+
+	password, err := resolvers.SecretKeyRef(
+		ctx,
+		kube,
+		store.GetKind(),
+		namespace,
+		config.Auth.PasswordSecretRef,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey, err := resolvers.SecretKeyRef(
+		ctx,
+		kube,
+		store.GetKind(),
+		namespace,
+		config.Auth.PrivateKeySecretRef,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient, err := buildHTTPClient(ctx, config, kube, store.GetKind(), namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := api.NewClient(httpClient, "", config.Host, privateKey, password)
+	if err != nil {
+		return nil, err
+	}
+
+	// Login immediately (like CLI does)
+	if err := client.Login(ctx); err != nil {
+		return nil, err
+	}
+
+	// Prefetch caches for V5 metadata decryption performance (CLI pattern)
+	// This caches session keys and metadata keys for fast V5 decryption
+	if _, _, err := client.PreFetchCaches(ctx); err != nil {
+		log.V(1).Info("prefetch caches failed (non-fatal)", "error", err)
+	}
+
+	provider.client = client
+	return provider, nil
+}
+
+// SecretExists checks if a secret exists in Passbolt.
+func (provider *ProviderPassbolt) SecretExists(_ context.Context, _ esv1.PushSecretRemoteRef) (bool, error) {
+	return false, errors.New(errNotImplemented)
+}
+
+// GetSecret retrieves a secret from Passbolt.
+func (provider *ProviderPassbolt) GetSecret(ctx context.Context, ref esv1.ExternalSecretDataRemoteRef) ([]byte, error) {
+	if err := assureLoggedIn(ctx, provider.client); err != nil {
+		return nil, err
+	}
+
+	secret, err := provider.getPassboltSecret(ctx, ref.Key)
+	if err != nil {
+		return nil, err
+	}
+
+	if ref.Property == "" {
+		return esutils.JSONMarshal(secret)
+	}
+
+	return secret.GetProp(ref.Property)
+}
+
+// PushSecret is not implemented for Passbolt as it is read-only.
+func (provider *ProviderPassbolt) PushSecret(_ context.Context, _ *corev1.Secret, _ esv1.PushSecretData) error {
+	return errors.New(errNotImplemented)
+}
+
+// DeleteSecret is not implemented for Passbolt as it is read-only.
+func (provider *ProviderPassbolt) DeleteSecret(_ context.Context, _ esv1.PushSecretRemoteRef) error {
+	return errors.New(errNotImplemented)
+}
+
+// Validate performs validation of the Passbolt provider configuration.
+func (provider *ProviderPassbolt) Validate() (esv1.ValidationResult, error) {
+	return esv1.ValidationResultUnknown, nil
+}
+
+// GetSecretMap retrieves a secret and returns it as a map of key/value pairs.
+func (provider *ProviderPassbolt) GetSecretMap(_ context.Context, _ esv1.ExternalSecretDataRemoteRef) (map[string][]byte, error) {
+	return nil, errors.New(errNotImplemented)
+}
+
+// GetAllSecrets retrieves all secrets from Passbolt that match the given criteria.
+func (provider *ProviderPassbolt) GetAllSecrets(ctx context.Context, ref esv1.ExternalSecretFind) (map[string][]byte, error) {
+	res := make(map[string][]byte)
+
+	if ref.Name == nil || ref.Name.RegExp == "" {
+		return res, errors.New(errPassboltExternalSecretMissingFindNameRegExp)
+	}
+
+	if err := assureLoggedIn(ctx, provider.client); err != nil {
+		return nil, err
+	}
+
+	resources, err := provider.client.GetResources(ctx, &api.GetResourcesOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	nameRegexp, err := regexp.Compile(ref.Name.RegExp)
+	if err != nil {
+		return nil, err
+	}
+
+	// NOTE: For V5 resources, metadata (including name) is encrypted, so we must
+	// decrypt each resource before filtering. This means all secrets are decrypted
+	// even if they don't match the filter, which may impact performance with large
+	// secret stores.
+	for _, resource := range resources {
+		secret, err := provider.secretFromResource(ctx, &resource)
+		if err != nil {
+			return nil, err
+		}
+
+		// Filter by decrypted name (works for both V4 and V5)
+		if !nameRegexp.MatchString(secret.Name) {
+			continue
+		}
+
+		marshaled, err := esutils.JSONMarshal(secret)
+		if err != nil {
+			return nil, err
+		}
+		res[resource.ID] = marshaled
+	}
+
+	return res, nil
+}
+
+// Close implements cleanup operations for the Passbolt provider.
+func (provider *ProviderPassbolt) Close(ctx context.Context) error {
+	// Save any pending session keys discovered during decryption (CLI pattern)
+	// This improves performance for future connections
+	_, _ = provider.client.SavePendingSessionKeys(ctx) // Best effort
+	return provider.client.Logout(ctx)
+}
+
+// ValidateStore validates the Passbolt SecretStore resource configuration.
+func (provider *ProviderPassbolt) ValidateStore(store esv1.GenericStore) (admission.Warnings, error) {
+	config := store.GetSpec().Provider.Passbolt
+	if config == nil {
+		return nil, errors.New(errPassboltStoreMissingProvider)
+	}
+
+	if config.Auth == nil {
+		return nil, errors.New(errPassboltStoreMissingAuth)
+	}
+
+	if config.Auth.PasswordSecretRef == nil || config.Auth.PasswordSecretRef.Name == "" || config.Auth.PasswordSecretRef.Key == "" {
+		return nil, errors.New(errPassboltStoreMissingAuthPassword)
+	}
+
+	if config.Auth.PrivateKeySecretRef == nil || config.Auth.PrivateKeySecretRef.Name == "" || config.Auth.PrivateKeySecretRef.Key == "" {
+		return nil, errors.New(errPassboltStoreMissingAuthPrivateKey)
+	}
+	if config.Host == "" {
+		return nil, errors.New(errPassboltStoreMissingHost)
+	}
+
+	host, err := url.Parse(config.Host)
+	if err != nil {
+		return nil, err
+	}
+
+	if host.Scheme != "https" {
+		return nil, errors.New(errPassboltStoreHostSchemeNotHTTPS)
+	}
+
+	return nil, nil
+}
+
+// Secret represents a Passbolt secret with its properties.
+type Secret struct {
+	Name        string `json:"name"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	URI         string `json:"uri"`
+	Description string `json:"description"`
+	// CustomFields holds any custom fields defined on the resource, keyed by
+	// the field's display name. Fields whose name is stored encrypted
+	// (secret_key rather than metadata_key) are keyed by their decrypted name.
+	CustomFields map[string]string `json:"custom_fields,omitempty"`
+}
+
+// GetProp retrieves a specific property from the Passbolt secret.
+//
+// Supported properties: name, username, uri, password, description.
+// Custom fields are accessed via the "custom_fields.<name>" prefix, where
+// <name> is the field's metadata_key (display name) as configured in Passbolt.
+func (ps Secret) GetProp(key string) ([]byte, error) {
+	switch key {
+	case "name":
+		return []byte(ps.Name), nil
+	case "username":
+		return []byte(ps.Username), nil
+	case "uri":
+		return []byte(ps.URI), nil
+	case "password":
+		return []byte(ps.Password), nil
+	case "description":
+		return []byte(ps.Description), nil
+	default:
+		if fieldName, ok := strings.CutPrefix(key, customFieldPrefix); ok {
+			val, exists := ps.CustomFields[fieldName]
+			if !exists {
+				return nil, fmt.Errorf("%w: %s", errPassboltCustomFieldNotFound, fieldName)
+			}
+			return []byte(val), nil
+		}
+		return nil, errors.New(errPassboltSecretPropertyInvalid)
+	}
+}
+
+func (provider *ProviderPassbolt) getPassboltSecret(ctx context.Context, id string) (*Secret, error) {
+	resource, err := provider.client.GetResource(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return provider.secretFromResource(ctx, resource)
+}
+
+// secretFromResource decrypts an already-fetched resource into a Secret,
+// sparing callers that hold the resource a redundant GetResource call.
+func (provider *ProviderPassbolt) secretFromResource(ctx context.Context, resource *api.Resource) (*Secret, error) {
+	rType, err := provider.client.GetResourceType(ctx, resource.ResourceTypeID)
+	if err != nil {
+		return nil, err
+	}
+
+	secretData, err := provider.client.GetSecret(ctx, resource.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, metaFields, secretFields, err := helper.GetResourceFieldMaps(provider.client, *resource, *secretData, *rType, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Secret{
+		Name:         helper.GetStringField(metaFields, "name"),
+		Username:     helper.GetStringField(metaFields, "username"),
+		URI:          helper.GetStringField(metaFields, "uri"),
+		Password:     helper.GetStringField(secretFields, "password"),
+		Description:  helper.GetStringField(metaFields, "description"),
+		CustomFields: helper.ParseCustomFields(metaFields, secretFields).Map(),
+	}, nil
+}
+
+func assureLoggedIn(ctx context.Context, client *api.Client) error {
+	if client.CheckSession(ctx) {
+		return nil
+	}
+	return client.Login(ctx)
+}
+
+// buildHTTPClient returns an *http.Client configured with the provider's CA bundle
+// or CA provider, if either is set. When neither is set it returns nil so that the
+// underlying SDK uses its default HTTP client (and the system root CAs).
+func buildHTTPClient(ctx context.Context, config *esv1.PassboltProvider, kube kclient.Client, storeKind, namespace string) (*http.Client, error) {
+	if len(config.CABundle) == 0 && config.CAProvider == nil {
+		return nil, nil
+	}
+
+	caCert, err := esutils.FetchCACertFromSource(ctx, esutils.CreateCertOpts{
+		CABundle:   config.CABundle,
+		CAProvider: config.CAProvider,
+		StoreKind:  storeKind,
+		Namespace:  namespace,
+		Client:     kube,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return nil, errors.New(errPassboltCAInvalid)
+	}
+
+	// Clone the default transport so we keep its proxy/dialer/HTTP2/idle
+	// connection settings and only override the TLS configuration.
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New(errPassboltUnexpectedTransport)
+	}
+	transport := defaultTransport.Clone()
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	} else {
+		transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+	}
+	transport.TLSClientConfig.RootCAs = caCertPool
+	transport.TLSClientConfig.MinVersion = tls.VersionTLS12
+
+	return &http.Client{
+		Transport: transport,
+	}, nil
+}
+
+// NewProvider creates a new Provider instance.
+func NewProvider() esv1.Provider {
+	return &ProviderPassbolt{}
+}
+
+// ProviderSpec returns the provider specification for registration.
+func ProviderSpec() *esv1.SecretStoreProvider {
+	return &esv1.SecretStoreProvider{
+		Passbolt: &esv1.PassboltProvider{},
+	}
+}
+
+// MaintenanceStatus returns the maintenance status of the provider.
+func MaintenanceStatus() esv1.MaintenanceStatus {
+	return esv1.MaintenanceStatusMaintained
+}

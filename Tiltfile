@@ -19,23 +19,47 @@ settings.update(read_yaml(
     tilt_file,
     default = {},
 ))
+
 # set up the development environment
 
-# Update the root security group. Tilt requires root access to update the
-# running process.
+# Split the YAML into CRDs and other resources
 objects = decode_yaml_stream(read_file('bin/deploy/manifests/external-secrets.yaml'))
+
+crds = []
+other_resources = []
+
 for o in objects:
+    if o.get('kind') == 'CustomResourceDefinition':
+        crds.append(o)
+    else:
+        other_resources.append(o)
+
+# Process deployments for development
+for o in other_resources:
     if o.get('kind') == 'Deployment' and o.get('metadata').get('name') in ['external-secrets-cert-controller', 'external-secrets', 'external-secrets-webhook']:
-        o['spec']['template']['spec']['securityContext'] = {'runAsNonRoot': False}
-        o['spec']['template']['spec']['imagePullPolicy'] = 'Always'
+        o['spec']['template']['spec']['containers'][0]['securityContext'] = {'runAsNonRoot': False, 'readOnlyRootFilesystem': False}
+        o['spec']['template']['spec']['containers'][0]['imagePullPolicy'] = 'Always'
         if settings.get('debug').get('enabled') and o.get('metadata').get('name') == 'external-secrets':
             o['spec']['template']['spec']['containers'][0]['ports'] = [{'containerPort': 30000}]
 
+# Create the directory
+local('mkdir -p .tilt-tmp')
 
-updated_install = encode_yaml_stream(objects)
+# Apply CRDs with server-side apply (handles large CRDs)
+if crds:
+    crd_yaml = encode_yaml_stream(crds)
+    local('cat > .tilt-tmp/external-secrets-crds.yaml', stdin=crd_yaml)
+    local_resource(
+        'apply-crds',
+        'kubectl apply --server-side -f .tilt-tmp/external-secrets-crds.yaml',
+        deps=['bin/deploy/manifests/external-secrets.yaml']
+    )
 
-# Apply the updated yaml to the cluster.
-k8s_yaml(updated_install, allow_duplicates = True)
+# Use regular k8s_yaml for deployments (Tilt will handle image substitution)
+if other_resources:
+    deployments_yaml = encode_yaml_stream(other_resources)
+    local('cat > .tilt-tmp/external-secrets-deployments.yaml', stdin=deployments_yaml)
+    k8s_yaml('.tilt-tmp/external-secrets-deployments.yaml')
 
 load('ext://restart_process', 'docker_build_with_restart')
 
@@ -46,22 +70,31 @@ load('ext://restart_process', 'docker_build_with_restart')
 # Once done, rebuilding now should be a lot faster since only the relevant
 # binary is rebuilt and the hot swat wrapper takes care of the rest.
 gcflags = ''
+build_command_prefix = ''
+binary_deps = [
+    "main.go",
+    "go.mod",
+    "go.sum",
+    "apis",
+    "cmd",
+    "pkg",
+]
 if settings.get('debug').get('enabled'):
     gcflags = '-N -l'
+    build_command_prefix = 'make dlv && '
+    binary_deps += [
+        "Makefile",
+        "hack/tools/go.mod",
+        "hack/tools/go.sum",
+    ]
+
+buildtags = settings.get('buildtags', 'all_providers')
 
 local_resource(
     'external-secret-binary',
-    "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -gcflags '{gcflags}' -v -o bin/external-secrets ./".format(gcflags=gcflags),
-    deps = [
-        "main.go",
-        "go.mod",
-        "go.sum",
-        "apis",
-        "cmd",
-        "pkg",
-    ],
+    "{prefix}CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags '{buildtags}' -gcflags '{gcflags}' -v -o bin/external-secrets ./".format(prefix=build_command_prefix, buildtags=buildtags, gcflags=gcflags),
+    deps = binary_deps,
 )
-
 
 # Build the docker image for our controller. We use a specific Dockerfile
 # since tilt can't run on a scratch container.
@@ -77,7 +110,6 @@ if settings.get('debug').get('enabled'):
     ])
     entrypoint = ['/dlv', '--listen=:30000', '--api-version=2', '--continue=true', '--accept-multiclient=true', '--headless=true', 'exec', '/external-secrets', '--']
     dockerfile = 'tilt.debug.dockerfile'
-
 
 docker_build_with_restart(
     'ghcr.io/external-secrets/external-secrets',

@@ -19,11 +19,15 @@ jobs:
       timestamp: ${{ steps.timestamp.outputs.timestamp }}
 
     steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.inputs.ref }}
+          persist-credentials: false
       - name: set timestamp output
         id: timestamp
         run: |
@@ -32,28 +36,29 @@ jobs:
   # this rebuilds the image and creates a new tag with a timestamp suffix
   # e.g. v0.6.1-1669145271 and v0.6.1-ubi-1669145271
   publish-artifacts:
-    uses: ./.github/workflows/publish.yml
+    uses: $/.github/workflows/publish.yml
     needs: checkout
     permissions:
-      id-token: write
       contents: read
+      id-token: write #for keyless sign
+      packages: write #for updating packages
     strategy:
       matrix:
         include:
         - dockerfile: "Dockerfile"
           build-args: "CGO_ENABLED=0"
-          build-arch: "amd64 arm64"
-          build-platform: "linux/amd64,linux/arm64"
+          build-arch: "amd64 arm64 ppc64le"
+          build-platform: "linux/amd64,linux/arm64,linux/ppc64le"
           tag-suffix: "-${{ needs.checkout.outputs.timestamp }}" # distroless
         - dockerfile: "Dockerfile.ubi"
           build-args: "CGO_ENABLED=0"
-          build-arch: "amd64 arm64"
-          build-platform: "linux/amd64,linux/arm64"
+          build-arch: "amd64 arm64 ppc64le"
+          build-platform: "linux/amd64,linux/arm64,linux/ppc64le"
           tag-suffix: "-ubi-${{ needs.checkout.outputs.timestamp }}" # ubi
         - dockerfile: "Dockerfile.ubi"
           build-args: "CGO_ENABLED=0 GOEXPERIMENT=boringcrypto" # fips
-          build-arch: "amd64"
-          build-platform: "linux/amd64"
+          build-arch: "amd64 ppc64le"
+          build-platform: "linux/amd64,linux/ppc64le"
           tag-suffix: "-ubi-boringssl-${{ needs.checkout.outputs.timestamp }}"
     with:
       dockerfile: ${{ matrix.dockerfile }}
@@ -64,7 +69,6 @@ jobs:
       build-arch: ${{ matrix.build-arch }}
       ref: ${{ github.event.inputs.ref }}
       image-tag: ${{ github.event.inputs.ref }}
+      username: ${{ github.actor }}
     secrets:
-      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-
+      IS_FORK: ${{ secrets.GHCR_USERNAME }}

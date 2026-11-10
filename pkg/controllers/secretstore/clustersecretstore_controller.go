@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,24 +26,34 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	esapi "github.com/external-secrets/external-secrets/apis/externalsecrets/v1beta1"
+	esapi "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
+	esv1alpha1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1alpha1"
 	ctrlmetrics "github.com/external-secrets/external-secrets/pkg/controllers/metrics"
 	"github.com/external-secrets/external-secrets/pkg/controllers/secretstore/cssmetrics"
+
 	// Loading registered providers.
-	_ "github.com/external-secrets/external-secrets/pkg/provider/register"
+	_ "github.com/external-secrets/external-secrets/pkg/register"
 )
 
 // ClusterStoreReconciler reconciles a SecretStore object.
 type ClusterStoreReconciler struct {
 	client.Client
-	Log             logr.Logger
-	Scheme          *runtime.Scheme
-	ControllerClass string
-	RequeueInterval time.Duration
-	recorder        record.EventRecorder
+	Log               logr.Logger
+	Scheme            *runtime.Scheme
+	ControllerClass   string
+	RequeueInterval   time.Duration
+	recorder          record.EventRecorder
+	PushSecretEnabled bool
 }
 
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/reconcile
 func (r *ClusterStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.WithValues("clustersecretstore", req.NamespacedName)
 
@@ -61,14 +73,33 @@ func (r *ClusterStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	return reconcile(ctx, req, &css, r.Client, log, r.ControllerClass, cssmetrics.GetGaugeVec, r.recorder, r.RequeueInterval)
+	return reconcile(ctx, req, &css, r.Client, r.PushSecretEnabled, log, Opts{
+		ControllerClass: r.ControllerClass,
+		GaugeVecGetter:  cssmetrics.GetGaugeVec,
+		Recorder:        r.recorder,
+		RequeueInterval: r.RequeueInterval,
+	})
 }
 
 // SetupWithManager returns a new controller builder that will be started by the provided Manager.
-func (r *ClusterStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ClusterStoreReconciler) SetupWithManager(mgr ctrl.Manager, opts controller.Options) error {
 	r.recorder = mgr.GetEventRecorderFor("cluster-secret-store")
 
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr)
+
+	if r.PushSecretEnabled {
+		return builder.WithOptions(opts).
+			For(&esapi.ClusterSecretStore{}).
+			Watches(
+				&esv1alpha1.PushSecret{},
+				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrlreconcile.Request {
+					return findStoresForPushSecret(ctx, r.Client, obj, &esapi.ClusterSecretStoreList{})
+				}),
+			).
+			Complete(r)
+	}
+
+	return builder.WithOptions(opts).
 		For(&esapi.ClusterSecretStore{}).
 		Complete(r)
 }

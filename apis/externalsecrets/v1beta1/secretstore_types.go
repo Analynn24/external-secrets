@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,7 +31,7 @@ type SecretStoreSpec struct {
 	// Used to configure the provider. Only one provider may be set
 	Provider *SecretStoreProvider `json:"provider"`
 
-	// Used to configure http retries if failed
+	// Used to configure HTTP retries on failures.
 	// +optional
 	RetrySettings *SecretStoreRetrySettings `json:"retrySettings,omitempty"`
 
@@ -37,7 +39,7 @@ type SecretStoreSpec struct {
 	// +optional
 	RefreshInterval int `json:"refreshInterval,omitempty"`
 
-	// Used to constraint a ClusterSecretStore to specific namespaces. Relevant only to ClusterSecretStore
+	// Used to constrain a ClusterSecretStore to specific namespaces. Relevant only to ClusterSecretStore.
 	// +optional
 	Conditions []ClusterSecretStoreCondition `json:"conditions,omitempty"`
 }
@@ -50,7 +52,15 @@ type ClusterSecretStoreCondition struct {
 	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 
 	// Choose namespaces by name
+	// +optional
+	// +kubebuilder:validation:items:MinLength:=1
+	// +kubebuilder:validation:items:MaxLength:=63
+	// +kubebuilder:validation:items:Pattern:=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
 	Namespaces []string `json:"namespaces,omitempty"`
+
+	// Choose namespaces by using regex matching
+	// +optional
+	NamespaceRegexes []string `json:"namespaceRegexes,omitempty"`
 }
 
 // SecretStoreProvider contains the provider-specific configuration.
@@ -69,7 +79,11 @@ type SecretStoreProvider struct {
 	// +optional
 	Akeyless *AkeylessProvider `json:"akeyless,omitempty"`
 
-	// Vault configures this store to sync secrets using Hashi provider
+	// BitwardenSecretsManager configures this store to sync secrets using BitwardenSecretsManager provider
+	// +optional
+	BitwardenSecretsManager *BitwardenSecretsManagerProvider `json:"bitwardensecretsmanager,omitempty"`
+
+	// Vault configures this store to sync secrets using the HashiCorp Vault provider.
 	// +optional
 	Vault *VaultProvider `json:"vault,omitempty"`
 
@@ -92,6 +106,10 @@ type SecretStoreProvider struct {
 	// YandexLockbox configures this store to sync secrets using Yandex Lockbox provider
 	// +optional
 	YandexLockbox *YandexLockboxProvider `json:"yandexlockbox,omitempty"`
+
+	// Github configures this store to push GitHub Actions secrets using the GitHub API provider.
+	// +optional
+	Github *GithubProvider `json:"github,omitempty"`
 
 	// GitLab configures this store to sync secrets using GitLab Variables provider
 	// +optional
@@ -121,13 +139,21 @@ type SecretStoreProvider struct {
 	// +optional
 	Senhasegura *SenhaseguraProvider `json:"senhasegura,omitempty"`
 
-	// Scaleway
+	// Scaleway configures this store to sync secrets using the Scaleway provider.
 	// +optional
 	Scaleway *ScalewayProvider `json:"scaleway,omitempty"`
 
 	// Doppler configures this store to sync secrets using the Doppler provider
 	// +optional
 	Doppler *DopplerProvider `json:"doppler,omitempty"`
+
+	// Previder configures this store to sync secrets using the Previder provider
+	// +optional
+	Previder *PreviderProvider `json:"previder,omitempty"`
+
+	// Onboardbase configures this store to sync secrets using the Onboardbase provider
+	// +optional
+	Onboardbase *OnboardbaseProvider `json:"onboardbase,omitempty"`
 
 	// KeeperSecurity configures this store to sync secrets using the KeeperSecurity provider
 	// +optional
@@ -142,19 +168,57 @@ type SecretStoreProvider struct {
 	// +optional
 	Delinea *DelineaProvider `json:"delinea,omitempty"`
 
+	// SecretServer configures this store to sync secrets using SecretServer provider
+	// https://docs.delinea.com/online-help/secret-server/start.htm
+	// +optional
+	SecretServer *SecretServerProvider `json:"secretserver,omitempty"`
+
 	// Chef configures this store to sync secrets with chef server
 	// +optional
 	Chef *ChefProvider `json:"chef,omitempty"`
+
+	// Pulumi configures this store to sync secrets using the Pulumi provider
+	// +optional
+	Pulumi *PulumiProvider `json:"pulumi,omitempty"`
+
+	// Fortanix configures this store to sync secrets using the Fortanix provider
+	// +optional
+	Fortanix *FortanixProvider `json:"fortanix,omitempty"`
+
+	// +optional
+	PasswordDepot *PasswordDepotProvider `json:"passworddepot,omitempty"`
+
+	// +optional
+	Passbolt *PassboltProvider `json:"passbolt,omitempty"`
+
+	// Device42 configures this store to sync secrets using the Device42 provider
+	// +optional
+	Device42 *Device42Provider `json:"device42,omitempty"`
+
+	// Infisical configures this store to sync secrets using the Infisical provider
+	// +optional
+	Infisical *InfisicalProvider `json:"infisical,omitempty"`
+
+	// Beyondtrust configures this store to sync secrets using Password Safe provider.
+	// +optional
+	Beyondtrust *BeyondtrustProvider `json:"beyondtrust,omitempty"`
+
+	// CloudruSM configures this store to sync secrets using the Cloud.ru Secret Manager provider
+	// +optional
+	CloudruSM *CloudruSMProvider `json:"cloudrusm,omitempty"`
 }
 
+// CAProviderType defines the type of provider to use for CA certificates.
 type CAProviderType string
 
 const (
-	CAProviderTypeSecret    CAProviderType = "Secret"
+	// CAProviderTypeSecret indicates that the CA certificate is stored in a Secret.
+	CAProviderTypeSecret CAProviderType = "Secret"
+	// CAProviderTypeConfigMap indicates that the CA certificate is stored in a ConfigMap.
 	CAProviderTypeConfigMap CAProviderType = "ConfigMap"
 )
 
-// Used to provide custom certificate authority (CA) certificates
+// CAProvider provides custom certificate authority (CA) certificates
 // for a secret store. The CAProvider points to a Secret or ConfigMap resource
 // that contains a PEM-encoded certificate.
 type CAProvider struct {
@@ -163,34 +227,53 @@ type CAProvider struct {
 	Type CAProviderType `json:"type"`
 
 	// The name of the object located at the provider type.
+	// +kubebuilder:validation:MinLength:=1
+	// +kubebuilder:validation:MaxLength:=253
+	// +kubebuilder:validation:Pattern:=^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
 	Name string `json:"name"`
 
 	// The key where the CA certificate can be found in the Secret or ConfigMap.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinLength:=1
+	// +kubebuilder:validation:MaxLength:=253
+	// +kubebuilder:validation:Pattern:=^[-._a-zA-Z0-9]+$
 	Key string `json:"key,omitempty"`
 
 	// The namespace the Provider type is in.
 	// Can only be defined when used in a ClusterSecretStore.
 	// +optional
+	// +kubebuilder:validation:MinLength:=1
+	// +kubebuilder:validation:MaxLength:=63
+	// +kubebuilder:validation:Pattern:=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
 	Namespace *string `json:"namespace,omitempty"`
 }
 
+// SecretStoreRetrySettings defines configuration for retrying failed requests to the provider.
 type SecretStoreRetrySettings struct {
-	MaxRetries    *int32  `json:"maxRetries,omitempty"`
+	// MaxRetries is the maximum number of retry attempts.
+	MaxRetries *int32 `json:"maxRetries,omitempty"`
+	// RetryInterval is the interval between retry attempts.
 	RetryInterval *string `json:"retryInterval,omitempty"`
 }
 
+// SecretStoreConditionType represents the condition type of the SecretStore.
 type SecretStoreConditionType string
 
 const (
+	// SecretStoreReady indicates that the SecretStore has been successfully configured.
 	SecretStoreReady SecretStoreConditionType = "Ready"
 
-	ReasonInvalidStore          = "InvalidStoreConfiguration"
+	// ReasonInvalidStore indicates that the SecretStore has invalid configuration.
+	ReasonInvalidStore = "InvalidStoreConfiguration"
+	// ReasonInvalidProviderConfig indicates that the provider configuration is invalid.
 	ReasonInvalidProviderConfig = "InvalidProviderConfig"
-	ReasonValidationFailed      = "ValidationFailed"
-	ReasonStoreValid            = "Valid"
+	// ReasonValidationFailed indicates that validation of the SecretStore failed.
+	ReasonValidationFailed = "ValidationFailed"
+	// ReasonStoreValid indicates that the store is valid.
+	ReasonStoreValid = "Valid"
 )
 
+// SecretStoreStatusCondition defines the observed condition of the SecretStore.
 type SecretStoreStatusCondition struct {
 	Type   SecretStoreConditionType `json:"type"`
 	Status corev1.ConditionStatus   `json:"status"`
@@ -209,8 +292,11 @@ type SecretStoreStatusCondition struct {
 type SecretStoreCapabilities string
 
 const (
-	SecretStoreReadOnly  SecretStoreCapabilities = "ReadOnly"
+	// SecretStoreReadOnly indicates that the SecretStore only supports reading secrets.
+	SecretStoreReadOnly SecretStoreCapabilities = "ReadOnly"
+	// SecretStoreWriteOnly indicates that the SecretStore only supports writing secrets.
 	SecretStoreWriteOnly SecretStoreCapabilities = "WriteOnly"
+	// SecretStoreReadWrite indicates that the SecretStore supports both reading and writing secrets.
 	SecretStoreReadWrite SecretStoreCapabilities = "ReadWrite"
 )
 
@@ -223,7 +309,6 @@ type SecretStoreStatus struct {
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
 
 // SecretStore represents a secure external location for storing secrets, which can be referenced as part of `storeRef` fields.
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
@@ -231,7 +316,10 @@ type SecretStoreStatus struct {
 // +kubebuilder:printcolumn:name="Capabilities",type=string,JSONPath=`.status.capabilities`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,categories={externalsecrets},shortName=ss
+// +kubebuilder:unservedversion
+// +kubebuilder:deprecatedversion
+// +kubebuilder:metadata:labels="external-secrets.io/component=controller"
+// +kubebuilder:resource:scope=Namespaced,categories={external-secrets},shortName=ss
 type SecretStore struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -250,7 +338,6 @@ type SecretStoreList struct {
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
 
 // ClusterSecretStore represents a secure external location for storing secrets, which can be referenced as part of `storeRef` fields.
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
@@ -258,7 +345,10 @@ type SecretStoreList struct {
 // +kubebuilder:printcolumn:name="Capabilities",type=string,JSONPath=`.status.capabilities`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster,categories={externalsecrets},shortName=css
+// +kubebuilder:unservedversion
+// +kubebuilder:deprecatedversion
+// +kubebuilder:metadata:labels="external-secrets.io/component=controller"
+// +kubebuilder:resource:scope=Cluster,categories={external-secrets},shortName=css
 type ClusterSecretStore struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

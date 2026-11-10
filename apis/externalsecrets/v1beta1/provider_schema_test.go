@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -45,6 +47,11 @@ func (p *PP) PushSecret(_ context.Context, _ *corev1.Secret, _ PushSecretData) e
 // DeleteSecret deletes a single secret from a provider.
 func (p *PP) DeleteSecret(_ context.Context, _ PushSecretRemoteRef) error {
 	return nil
+}
+
+// Exists checks if a secret is already present in the provider at the given location.
+func (p *PP) SecretExists(_ context.Context, _ PushSecretRemoteRef) (bool, error) {
+	return false, nil
 }
 
 // GetSecret returns a single secret from the provider.
@@ -136,7 +143,7 @@ func runTest(t *testing.T, name string, provider *SecretStoreProvider, expPanic 
 	}
 	if expPanic {
 		defer func() {
-			if r := recover(); r == nil {
+			if recover() == nil {
 				t.Errorf("Register should panic")
 			}
 		}()

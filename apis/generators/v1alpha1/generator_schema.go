@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,10 +19,6 @@ package v1alpha1
 import (
 	"fmt"
 	"sync"
-
-	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/json"
 )
 
 var builder map[string]Generator
@@ -57,25 +55,4 @@ func GetGeneratorByName(kind string) (Generator, bool) {
 	f, ok := builder[kind]
 	buildlock.RUnlock()
 	return f, ok
-}
-
-// GetGenerator returns a implementation from a generator
-// defined as json.
-func GetGenerator(obj *apiextensions.JSON) (Generator, error) {
-	type unknownGenerator struct {
-		metav1.TypeMeta   `json:",inline"`
-		metav1.ObjectMeta `json:"metadata,omitempty"`
-	}
-	var res unknownGenerator
-	err := json.Unmarshal(obj.Raw, &res)
-	if err != nil {
-		return nil, err
-	}
-	buildlock.RLock()
-	defer buildlock.RUnlock()
-	gen, ok := builder[res.Kind]
-	if !ok {
-		return nil, fmt.Errorf("failed to find registered generator for: %s", string(obj.Raw))
-	}
-	return gen, nil
 }

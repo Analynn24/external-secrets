@@ -1,0 +1,481 @@
+/*
+Copyright © The ESO Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"crypto/tls"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+	v1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
+	esv1alpha1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1alpha1"
+	genv1alpha1 "github.com/external-secrets/external-secrets/apis/generators/v1alpha1"
+	"github.com/external-secrets/external-secrets/pkg/controllers/clusterexternalsecret"
+	"github.com/external-secrets/external-secrets/pkg/controllers/clusterexternalsecret/cesmetrics"
+	"github.com/external-secrets/external-secrets/pkg/controllers/clusterpushsecret"
+	"github.com/external-secrets/external-secrets/pkg/controllers/clusterpushsecret/cpsmetrics"
+	ctrlcommon "github.com/external-secrets/external-secrets/pkg/controllers/common"
+	"github.com/external-secrets/external-secrets/pkg/controllers/externalsecret"
+	"github.com/external-secrets/external-secrets/pkg/controllers/externalsecret/esmetrics"
+	"github.com/external-secrets/external-secrets/pkg/controllers/generatorstate"
+	ctrlmetrics "github.com/external-secrets/external-secrets/pkg/controllers/metrics"
+	"github.com/external-secrets/external-secrets/pkg/controllers/pushsecret"
+	"github.com/external-secrets/external-secrets/pkg/controllers/pushsecret/psmetrics"
+	"github.com/external-secrets/external-secrets/pkg/controllers/secretstore"
+	"github.com/external-secrets/external-secrets/pkg/controllers/secretstore/cssmetrics"
+	"github.com/external-secrets/external-secrets/pkg/controllers/secretstore/ssmetrics"
+	"github.com/external-secrets/external-secrets/runtime/esutils"
+	"github.com/external-secrets/external-secrets/runtime/feature"
+
+	// To allow using gcp auth.
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
+)
+
+var (
+	scheme                                = runtime.NewScheme()
+	setupLog                              = ctrl.Log.WithName("setup")
+	dnsName                               string
+	certDir                               string
+	liveAddr                              string
+	metricsAddr                           string
+	metricsSecure                         bool
+	metricsAuth                           bool
+	metricsCertDir                        string
+	metricsCertName                       string
+	metricsKeyName                        string
+	healthzAddr                           string
+	controllerClass                       string
+	enableLeaderElection                  bool
+	leaderElectionID                      string
+	leaderElectionLeaseDuration           time.Duration
+	leaderElectionRenewDeadline           time.Duration
+	leaderElectionRetryPeriod             time.Duration
+	enableSecretsCache                    bool
+	enableConfigMapsCache                 bool
+	enableManagedSecretsCache             bool
+	enableSecretAPIReadOnCacheMismatch    bool
+	enablePartialCache                    bool
+	concurrent                            int
+	port                                  int
+	clientQPS                             float32
+	clientBurst                           int
+	loglevel                              string
+	zapTimeEncoding                       string
+	namespace                             string
+	enableClusterStoreReconciler          bool
+	enableSecretStoreReconciler           bool
+	enableClusterExternalSecretReconciler bool
+	enableClusterPushSecretReconciler     bool
+	enablePushSecretReconciler            bool
+	enableFloodGate                       bool
+	enableGeneratorState                  bool
+	enableExtendedMetricLabels            bool
+	storeRequeueInterval                  time.Duration
+	serviceName, serviceNamespace         string
+	secretName, secretNamespace           string
+	crdNames                              []string
+	crdRequeueInterval                    time.Duration
+	certCheckInterval                     time.Duration
+	certLookaheadInterval                 time.Duration
+	tlsCiphers                            string
+	tlsMinVersion                         string
+	tlsCurvePreferences                   []string
+	enableHTTP2                           bool
+	allowGenericTargets                   bool
+)
+
+const (
+	errCreateController = "unable to create controller"
+)
+
+func init() {
+	// kubernetes schemes
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+
+	// external-secrets schemes
+	utilruntime.Must(esv1.AddToScheme(scheme))
+	utilruntime.Must(esv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(genv1alpha1.AddToScheme(scheme))
+}
+
+var rootCmd = &cobra.Command{
+	Use:   "external-secrets",
+	Short: "operator that reconciles ExternalSecrets and SecretStores",
+	Long:  `For more information visit https://external-secrets.io`,
+	Run: func(cmd *cobra.Command, _ []string) {
+		setupLogger()
+
+		ctrlmetrics.SetUpLabelNames(enableExtendedMetricLabels)
+		esmetrics.SetUpMetrics()
+		config := ctrl.GetConfigOrDie()
+		config.QPS = clientQPS
+		config.Burst = clientBurst
+
+		// the client creates a ListWatch for resources that are requested with .Get() or .List()
+		// some users might want to completely disable caching of Secrets and ConfigMaps
+		// to decrease memory usage at the expense of high Kubernetes API usage
+		// see: https://github.com/external-secrets/external-secrets/issues/721
+		clientCacheDisableFor := make([]client.Object, 0)
+		if !enableSecretsCache {
+			// dont cache any secrets
+			clientCacheDisableFor = append(clientCacheDisableFor, &v1.Secret{})
+		}
+		if !enableConfigMapsCache {
+			// dont cache any configmaps
+			clientCacheDisableFor = append(clientCacheDisableFor, &v1.ConfigMap{})
+		}
+		metricsOpts := server.Options{
+			BindAddress: metricsAddr,
+		}
+		if metricsSecure {
+			metricsOpts.SecureServing = true
+			metricsOpts.CertDir = metricsCertDir
+			metricsOpts.CertName = metricsCertName
+			metricsOpts.KeyName = metricsKeyName
+		}
+		if metricsAuth {
+			metricsOpts.FilterProvider = filters.WithAuthenticationAndAuthorization
+		}
+		if metricsAuth && !metricsSecure {
+			setupLog.Error(nil, "--metrics-auth requires --metrics-secure; bearer tokens over plaintext HTTP is not allowed")
+			os.Exit(1)
+		}
+		metricsTLSOpts, err := buildTLSConfigFuncs(tlsCiphers, tlsMinVersion, tlsCurvePreferences, enableHTTP2)
+		if err != nil {
+			setupLog.Error(err, "unable to configure TLS for metrics server")
+			os.Exit(1)
+		}
+		metricsOpts.TLSOpts = metricsTLSOpts
+		mgrOpts := ctrl.Options{
+			Scheme:                 scheme,
+			Metrics:                metricsOpts,
+			HealthProbeBindAddress: liveAddr,
+			WebhookServer: webhook.NewServer(webhook.Options{
+				Port: 9443,
+			}),
+			Client: client.Options{
+				Cache: &client.CacheOptions{
+					DisableFor: clientCacheDisableFor,
+				},
+			},
+			LeaderElection:   enableLeaderElection,
+			LeaderElectionID: leaderElectionID,
+			LeaseDuration:    &leaderElectionLeaseDuration,
+			RenewDeadline:    &leaderElectionRenewDeadline,
+			RetryPeriod:      &leaderElectionRetryPeriod,
+		}
+		if namespace != "" {
+			mgrOpts.Cache.DefaultNamespaces = map[string]cache.Config{
+				namespace: {},
+			}
+		}
+		mgr, err := ctrl.NewManager(config, mgrOpts)
+		if err != nil {
+			setupLog.Error(err, "unable to start manager")
+			os.Exit(1)
+		}
+
+		// we create a special client for accessing secrets in the ExternalSecret reconcile loop.
+		// by default, it is the same as the normal client, but if `--enable-managed-secrets-caching`
+		// is set, we use a special client that only caches secrets managed by an ExternalSecret.
+		// if we are already caching all secrets, we don't need to use the special client.
+		secretClient := mgr.GetClient()
+		if enableManagedSecretsCache && !enableSecretsCache {
+			secretClient, err = ctrlcommon.BuildManagedSecretClient(mgr, namespace)
+			if err != nil {
+				setupLog.Error(err, "unable to create managed secret client")
+				os.Exit(1)
+			}
+		}
+
+		if enableSecretStoreReconciler {
+			ssmetrics.SetUpMetrics()
+			if err = (&secretstore.StoreReconciler{
+				Client:            mgr.GetClient(),
+				Log:               ctrl.Log.WithName("controllers").WithName("SecretStore"),
+				Scheme:            mgr.GetScheme(),
+				ControllerClass:   controllerClass,
+				RequeueInterval:   storeRequeueInterval,
+				PushSecretEnabled: enablePushSecretReconciler,
+			}).SetupWithManager(mgr, ctrlcommon.BuildControllerOptions(concurrent)); err != nil {
+				setupLog.Error(err, errCreateController, "controller", "SecretStore")
+				os.Exit(1)
+			}
+		}
+
+		if enableClusterStoreReconciler {
+			cssmetrics.SetUpMetrics()
+			if err = (&secretstore.ClusterStoreReconciler{
+				Client:            mgr.GetClient(),
+				Log:               ctrl.Log.WithName("controllers").WithName("ClusterSecretStore"),
+				Scheme:            mgr.GetScheme(),
+				ControllerClass:   controllerClass,
+				RequeueInterval:   storeRequeueInterval,
+				PushSecretEnabled: enablePushSecretReconciler,
+			}).SetupWithManager(mgr, ctrlcommon.BuildControllerOptions(concurrent)); err != nil {
+				setupLog.Error(err, errCreateController, "controller", "ClusterSecretStore")
+				os.Exit(1)
+			}
+		}
+		if err = (&generatorstate.Reconciler{
+			Client:     mgr.GetClient(),
+			Log:        ctrl.Log.WithName("controllers").WithName("GeneratorState"),
+			Scheme:     mgr.GetScheme(),
+			RestConfig: mgr.GetConfig(),
+		}).SetupWithManager(mgr, ctrlcommon.BuildControllerOptions(concurrent)); err != nil {
+			setupLog.Error(err, errCreateController, "controller", "GeneratorState")
+			os.Exit(1)
+		}
+		if err = (&externalsecret.Reconciler{
+			Client:                             mgr.GetClient(),
+			SecretClient:                       secretClient,
+			EnableSecretAPIReadOnCacheMismatch: enableSecretAPIReadOnCacheMismatch,
+			Log:                                ctrl.Log.WithName("controllers").WithName("ExternalSecret"),
+			Scheme:                             mgr.GetScheme(),
+			RestConfig:                         mgr.GetConfig(),
+			ControllerClass:                    controllerClass,
+			RequeueInterval:                    time.Hour,
+			ClusterSecretStoreEnabled:          enableClusterStoreReconciler,
+			EnableFloodGate:                    enableFloodGate,
+			EnableGeneratorState:               enableGeneratorState,
+			AllowGenericTargets:                allowGenericTargets,
+		}).SetupWithManager(cmd.Context(), mgr, ctrlcommon.BuildControllerOptions(concurrent)); err != nil {
+			setupLog.Error(err, errCreateController, "controller", "ExternalSecret")
+			os.Exit(1)
+		}
+		if enablePushSecretReconciler {
+			psmetrics.SetUpMetrics()
+			if err = (&pushsecret.Reconciler{
+				Client:                    mgr.GetClient(),
+				Log:                       ctrl.Log.WithName("controllers").WithName("PushSecret"),
+				Scheme:                    mgr.GetScheme(),
+				ControllerClass:           controllerClass,
+				ClusterSecretStoreEnabled: enableClusterStoreReconciler,
+				RestConfig:                mgr.GetConfig(),
+				RequeueInterval:           time.Hour,
+			}).SetupWithManager(cmd.Context(), mgr, ctrlcommon.BuildControllerOptions(concurrent)); err != nil {
+				setupLog.Error(err, errCreateController, "controller", "PushSecret")
+				os.Exit(1)
+			}
+		}
+		if enableClusterExternalSecretReconciler {
+			cesmetrics.SetUpMetrics()
+
+			if err = (&clusterexternalsecret.Reconciler{
+				Client:          mgr.GetClient(),
+				Log:             ctrl.Log.WithName("controllers").WithName("ClusterExternalSecret"),
+				Scheme:          mgr.GetScheme(),
+				RequeueInterval: time.Hour,
+			}).SetupWithManager(mgr, ctrlcommon.BuildControllerOptions(concurrent)); err != nil {
+				setupLog.Error(err, errCreateController, "controller", "ClusterExternalSecret")
+				os.Exit(1)
+			}
+		}
+
+		if enableClusterPushSecretReconciler {
+			cpsmetrics.SetUpMetrics()
+
+			if err = (&clusterpushsecret.Reconciler{
+				Client:          mgr.GetClient(),
+				Log:             ctrl.Log.WithName("controllers").WithName("ClusterPushSecret"),
+				Scheme:          mgr.GetScheme(),
+				RequeueInterval: time.Hour,
+				Recorder:        mgr.GetEventRecorderFor("external-secrets-controller"),
+			}).SetupWithManager(mgr, ctrlcommon.BuildControllerOptions(concurrent)); err != nil {
+				setupLog.Error(err, errCreateController, "controller", "ClusterPushSecret")
+				os.Exit(1)
+			}
+		}
+
+		if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+			setupLog.Error(err, "unable to add controller healthz check")
+			os.Exit(1)
+		}
+		if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+			setupLog.Error(err, "unable to add controller readyz check")
+			os.Exit(1)
+		}
+
+		fs := feature.Features()
+		for _, f := range fs {
+			if f.Initialize == nil {
+				continue
+			}
+			f.Initialize()
+		}
+		setupLog.Info("starting manager")
+		if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+			setupLog.Error(err, "problem running manager")
+			os.Exit(1)
+		}
+	},
+}
+
+// Execute starts the command execution process.
+func Execute() {
+	cobra.CheckErr(rootCmd.Execute())
+}
+
+func init() {
+	rootCmd.Flags().StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
+	rootCmd.Flags().BoolVar(&metricsAuth, "metrics-auth", false, "Enable Kubernetes RBAC-based authentication and authorization for the metrics endpoint.")
+	rootCmd.Flags().BoolVar(&metricsSecure, "metrics-secure", false, "Enable HTTPS for the metrics endpoint.")
+	rootCmd.Flags().StringVar(&metricsCertDir, "metrics-cert-dir", "", "Directory containing TLS certificate and key for metrics endpoint.")
+	rootCmd.Flags().StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "TLS certificate filename for metrics endpoint.")
+	rootCmd.Flags().StringVar(&metricsKeyName, "metrics-key-name", "tls.key", "TLS key filename for metrics endpoint.")
+	rootCmd.Flags().StringVar(&controllerClass, "controller-class", "default", "The controller is instantiated with a specific controller name and filters ES based on this property")
+	rootCmd.Flags().BoolVar(&enableLeaderElection, "enable-leader-election", false,
+		"Enable leader election for controller manager. "+
+			"Enabling this will ensure there is only one active controller manager.")
+	rootCmd.Flags().StringVar(&leaderElectionID, "leader-election-id", "external-secrets-controller",
+		"The ID of the lease object used for leader election. Set this to a unique value when running multiple deployments in the same namespace.")
+	rootCmd.Flags().DurationVar(&leaderElectionLeaseDuration, "leader-election-lease-duration", 15*time.Second,
+		"The duration that non-leader candidates will wait to force acquire leadership. This is measured against time of last observed ack.")
+	rootCmd.Flags().DurationVar(&leaderElectionRenewDeadline, "leader-election-renew-deadline", 10*time.Second,
+		"The interval between attempts by the acting leader to renew its leadership before it stops leading. This must be less than the lease duration.")
+	rootCmd.Flags().DurationVar(&leaderElectionRetryPeriod, "leader-election-retry-period", 2*time.Second,
+		"The duration the clients should wait between attempting acquisition and renewal of a leadership.")
+	rootCmd.Flags().IntVar(&concurrent, "concurrent", 1, "The number of concurrent reconciles.")
+	rootCmd.Flags().Float32Var(&clientQPS, "client-qps", 50, "QPS configuration to be passed to rest.Client")
+	rootCmd.Flags().IntVar(&clientBurst, "client-burst", 100, "Maximum Burst allowed to be passed to rest.Client")
+	rootCmd.Flags().StringVar(&liveAddr, "live-addr", ":8082", "The address the live endpoint binds to.")
+	rootCmd.Flags().StringVar(&loglevel, "loglevel", "info", "loglevel to use, one of: debug, info, warn, error, dpanic, panic, fatal")
+	rootCmd.Flags().StringVar(&zapTimeEncoding, "zap-time-encoding", "epoch", "Zap time encoding (one of 'epoch', 'millis', 'nano', 'iso8601', 'rfc3339' or 'rfc3339nano')")
+	rootCmd.Flags().
+		StringVar(&namespace, "namespace", "", "watch external secrets scoped in the provided namespace only. ClusterSecretStore can be used but only work if it doesn't reference resources from other namespaces")
+	rootCmd.Flags().BoolVar(&enableClusterStoreReconciler, "enable-cluster-store-reconciler", true, "Enable cluster store reconciler.")
+	rootCmd.Flags().BoolVar(&enableSecretStoreReconciler, "enable-secret-store-reconciler", true, "Enable secret store reconciler.")
+	rootCmd.Flags().BoolVar(&enableClusterExternalSecretReconciler, "enable-cluster-external-secret-reconciler", true, "Enable cluster external secret reconciler.")
+	rootCmd.Flags().BoolVar(&enableClusterPushSecretReconciler, "enable-cluster-push-secret-reconciler", true, "Enable cluster push secret reconciler.")
+	rootCmd.Flags().BoolVar(&enablePushSecretReconciler, "enable-push-secret-reconciler", true, "Enable push secret reconciler.")
+	rootCmd.Flags().BoolVar(&enableSecretsCache, "enable-secrets-caching", false, "Enable secrets caching for ALL secrets in the cluster (WARNING: can increase memory usage).")
+	rootCmd.Flags().BoolVar(&enableConfigMapsCache, "enable-configmaps-caching", false, "Enable configmaps caching for ALL configmaps in the cluster (WARNING: can increase memory usage).")
+	rootCmd.Flags().BoolVar(&enableManagedSecretsCache, "enable-managed-secrets-caching", true, "Enable secrets caching for secrets managed by an ExternalSecret")
+	rootCmd.Flags().BoolVar(
+		&enableSecretAPIReadOnCacheMismatch,
+		"enable-secret-api-read-on-cache-mismatch",
+		true,
+		"Enable a direct API read when the partial Secret cache and managed Secret cache disagree. Disable to rely on cache retry only.",
+	)
+	rootCmd.Flags().DurationVar(&storeRequeueInterval, "store-requeue-interval", time.Minute*5, "Default Time duration between reconciling (Cluster)SecretStores")
+	rootCmd.Flags().BoolVar(&enableFloodGate, "enable-flood-gate", true, "Enable flood gate. External secret will be reconciled only if the ClusterStore or Store have an healthy or unknown state.")
+	rootCmd.Flags().BoolVar(&enableGeneratorState, "enable-generator-state", true, "Whether the Controller should manage GeneratorState")
+	rootCmd.Flags().BoolVar(&enableExtendedMetricLabels, "enable-extended-metric-labels", false, "Enable recommended kubernetes annotations as labels in metrics.")
+	rootCmd.Flags().StringVar(&tlsCiphers, "tls-ciphers", "", "comma separated list of tls ciphers allowed for the metrics server. "+
+		"This does not apply to TLS 1.3 as the ciphers are selected automatically. "+
+		"Full lists of available ciphers can be found at https://pkg.go.dev/crypto/tls#pkg-constants")
+	rootCmd.Flags().StringVar(&tlsMinVersion, "tls-min-version", "", "minimum version of TLS supported for the metrics server. "+
+		"If not specified, Go's default minimum version is used. Valid values: 1.0, 1.1, 1.2, 1.3")
+	rootCmd.Flags().StringSliceVar(&tlsCurvePreferences, "tls-curve-preferences", nil,
+		"ordered list of TLS key exchange curves for the metrics server "+
+			"(for example X25519,CurveP256, or decimal tls.CurveID values supported by this Go toolchain). "+
+			"If omitted, Go defaults are used.")
+	rootCmd.Flags().BoolVar(&enableHTTP2, "enable-http2", false,
+		"If set, HTTP/2 will be enabled for the metrics server")
+	rootCmd.Flags().
+		BoolVar(&allowGenericTargets, "unsafe-allow-generic-targets", false, "Enable support for creating generic resources (ConfigMaps, Custom Resources). WARNING: Using generic resources, please sure all policies are correctly configured.")
+	fs := feature.Features()
+	for _, f := range fs {
+		rootCmd.Flags().AddFlagSet(f.Flags)
+	}
+}
+
+// disableHTTP2 is a TLS configuration function that disables HTTP/2.
+func disableHTTP2(cfg *tls.Config) {
+	cfg.NextProtos = []string{"http/1.1"}
+}
+
+// parseTLSCurvePreferences converts human-readable curve names to tls.CurveID values.
+// It accepts well-known names (X25519, CurveP256, CurveP384, CurveP521 and aliases)
+// as well as decimal tls.CurveID values for forward-compat with new Go toolchains.
+func parseTLSCurvePreferences(names []string) ([]tls.CurveID, error) {
+	filtered := make([]string, 0, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		filtered = append(filtered, n)
+	}
+	if len(filtered) == 0 {
+		return nil, nil
+	}
+	return esutils.ParseCurvePreferences(filtered)
+}
+
+// buildTLSConfigFuncs assembles a slice of tls.Config mutators from the current
+// flag values. It is shared across all subcommands (controller, webhook, certcontroller).
+func buildTLSConfigFuncs(ciphers, minVer string, curves []string, http2 bool) ([]func(*tls.Config), error) {
+	var opts []func(*tls.Config)
+
+	if !http2 {
+		opts = append(opts, disableHTTP2)
+	}
+
+	if ciphers != "" {
+		ids, err := getTLSCipherSuitesIDs(ciphers)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse tls ciphers: %w", err)
+		}
+		if len(ids) > 0 {
+			opts = append(opts, func(cfg *tls.Config) {
+				cfg.CipherSuites = ids
+			})
+		}
+	}
+
+	if minVer != "" {
+		ver, err := tlsVersion(minVer)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse tls min version: %w", err)
+		}
+		opts = append(opts, func(cfg *tls.Config) {
+			cfg.MinVersion = ver
+		})
+	}
+
+	if len(curves) > 0 {
+		curveIDs, err := parseTLSCurvePreferences(curves)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse tls curve preferences: %w", err)
+		}
+		if len(curveIDs) > 0 {
+			opts = append(opts, func(cfg *tls.Config) {
+				cfg.CurvePreferences = curveIDs
+			})
+		}
+	}
+
+	return opts, nil
+}

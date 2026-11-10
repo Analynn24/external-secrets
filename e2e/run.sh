@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright 2019 The Kubernetes Authors.
 #
@@ -14,11 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 set -euo pipefail
-
-if ! command -v kind --version &> /dev/null; then
-  echo "kind is not installed. Use the package manager or visit the official site https://kind.sigs.k8s.io/"
-  exit 1
-fi
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd $DIR
@@ -47,11 +42,10 @@ kubectl run --rm \
   --labels="app=eso-e2e,azure.workload.identity/use=true" \
   --env="ACK_GINKGO_DEPRECATIONS=2.9.5" \
   --env="GINKGO_LABELS=${GINKGO_LABELS:-.*}" \
-  --env="GCP_SM_SA_JSON=${GCP_SM_SA_JSON:-}" \
-  --env="GCP_PROJECT_ID=${GCP_PROJECT_ID:-}" \
-  --env="GCP_GSA_NAME=${GCP_GSA_NAME:-}" \
+  --env="GCP_SERVICE_ACCOUNT_KEY=${GCP_SERVICE_ACCOUNT_KEY:-}" \
+  --env="GCP_FED_PROJECT_ID=${GCP_FED_PROJECT_ID:-}" \
   --env="GCP_KSA_NAME=${GCP_KSA_NAME:-}" \
-  --env="GCP_GKE_ZONE=${GCP_GKE_ZONE:-}" \
+  --env="GCP_FED_REGION=${GCP_FED_REGION:-}" \
   --env="GCP_GKE_CLUSTER=${GCP_GKE_CLUSTER:-}" \
   --env="AWS_REGION=${AWS_REGION:-}" \
   --env="AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}" \
@@ -74,6 +68,9 @@ kubectl run --rm \
   --env="ORACLE_REGION=${ORACLE_REGION:-}" \
   --env="ORACLE_FINGERPRINT=${ORACLE_FINGERPRINT:-}" \
   --env="ORACLE_KEY=${ORACLE_KEY:-}" \
+  --env="ORACLE_VAULT_OCID=${ORACLE_VAULT_OCID:-}" \
+  --env="ORACLE_COMPARTMENT_OCID=${ORACLE_COMPARTMENT_OCID:-}" \
+  --env="ORACLE_ENCRYPTION_KEY_OCID=${ORACLE_ENCRYPTION_KEY_OCID:-}" \
   --env="SCALEWAY_API_URL=${SCALEWAY_API_URL:-}" \
   --env="SCALEWAY_REGION=${SCALEWAY_REGION:-}" \
   --env="SCALEWAY_PROJECT_ID=${SCALEWAY_PROJECT_ID:-}" \
@@ -84,7 +81,13 @@ kubectl run --rm \
   --env="DELINEA_TENANT=${DELINEA_TENANT:-}" \
   --env="DELINEA_CLIENT_ID=${DELINEA_CLIENT_ID:-}" \
   --env="DELINEA_CLIENT_SECRET=${DELINEA_CLIENT_SECRET:-}" \
+  --env="SECRETSERVER_USERNAME=${SECRETSERVER_USERNAME:-}" \
+  --env="SECRETSERVER_PASSWORD=${SECRETSERVER_PASSWORD:-}" \
+  --env="SECRETSERVER_URL=${SECRETSERVER_URL:-}" \
+  --env="GRAFANA_URL=${GRAFANA_URL:-}" \
+  --env="GRAFANA_TOKEN=${GRAFANA_TOKEN:-}" \
   --env="VERSION=${VERSION}" \
   --env="TEST_SUITES=${TEST_SUITES}" \
+  --env="E2E_SKIP_GLOBAL_TEARDOWN=${E2E_SKIP_GLOBAL_TEARDOWN:-}" \
   --overrides='{ "apiVersion": "v1", "spec":{"serviceAccountName": "external-secrets-e2e"}}' \
   e2e --image=${E2E_IMAGE_NAME}:${VERSION}

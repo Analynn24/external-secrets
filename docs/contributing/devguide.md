@@ -10,10 +10,11 @@ cd external-secrets
 
 _Note: many of the `make` commands use [yq](https://github.com/mikefarah/yq), version 4.2X.X or higher._
 
-Our helm chart is tested using `helm-unittest`. You will need it to run tests locally if you modify the helm chart. Install it with the following command:
+Our helm chart is tested using `helm-unittest`. You will need it to run tests locally if you modify the helm chart.
 
-```
-$ helm plugin install https://github.com/helm-unittest/helm-unittest
+```shell
+make helm.test
+make helm.test.update
 ```
 
 ## Building & Testing
@@ -29,10 +30,9 @@ make docker.build IMAGE_NAME=external-secrets IMAGE_TAG=latest
 ```
 
 Run tests and lint the code:
-```shell
+```console
 make test
-make lint # OR
-docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint:v1.49.0 golangci-lint run
+make lint
 ```
 
 Build the documentation:
@@ -40,12 +40,19 @@ Build the documentation:
 make docs
 ```
 
+## License Headers
+
+All Go source files must include the Apache License 2.0 header. The CI automatically checks license headers for new files added in pull requests using [Apache SkyWalking Eyes](https://github.com/apache/skywalking-eyes).
+
+If you need to check license headers locally, you can use the SkyWalking Eyes tool directly. The configuration is in `.licenserc.yaml` at the project root.
+
 ## Using Tilt
 
 [Tilt](https://tilt.dev) can be used to develop external-secrets. Tilt will hot-reload changes to the code and replace
 the running binary in the container using a process manager of its own.
 
 To run tilt, download the utility for your operating system and run `make tilt-up`. This will do two things:
+
 - downloads tilt for the current OS and ARCH under `bin/tilt`
 - make manifest files of your current changes and place them under `./bin/deploy/manifests/external-secrets.yaml`
 - run tilt with `tilt run`

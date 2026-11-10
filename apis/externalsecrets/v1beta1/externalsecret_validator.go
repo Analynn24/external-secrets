@@ -1,9 +1,11 @@
 /*
+Copyright © The ESO Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,54 +20,156 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
-	"k8s.io/apimachinery/pkg/runtime"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
+// Ensures ExternalSecretValidator implements the admission.CustomValidator interface correctly.
+var _ admission.Validator[*ExternalSecret] = &ExternalSecretValidator{}
+
+// ExternalSecretValidator implements a validating webhook for ExternalSecrets.
 type ExternalSecretValidator struct{}
 
-func (esv *ExternalSecretValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+// ValidateCreate validates the creation of an external secret object.
+func (in *ExternalSecretValidator) ValidateCreate(_ context.Context, obj *ExternalSecret) (warnings admission.Warnings, err error) {
 	return validateExternalSecret(obj)
 }
 
-func (esv *ExternalSecretValidator) ValidateUpdate(_ context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
+// ValidateUpdate validates the update of an external secret object.
+func (in *ExternalSecretValidator) ValidateUpdate(_ context.Context, _, newObj *ExternalSecret) (warnings admission.Warnings, err error) {
 	return validateExternalSecret(newObj)
 }
 
-func (esv *ExternalSecretValidator) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+// ValidateDelete validates the deletion of an external secret object.
+func (in *ExternalSecretValidator) ValidateDelete(_ context.Context, _ *ExternalSecret) (warnings admission.Warnings, err error) {
 	return nil, nil
 }
 
-func validateExternalSecret(obj runtime.Object) (admission.Warnings, error) {
-	es, ok := obj.(*ExternalSecret)
-	if !ok {
-		return nil, fmt.Errorf("unexpected type")
+func validateExternalSecret(es *ExternalSecret) (admission.Warnings, error) {
+	if es == nil {
+		return nil, errors.New("external secret cannot be nil during validation")
 	}
 
 	var errs error
-	if (es.Spec.Target.DeletionPolicy == DeletionPolicyDelete && es.Spec.Target.CreationPolicy == CreatePolicyMerge) ||
-		(es.Spec.Target.DeletionPolicy == DeletionPolicyDelete && es.Spec.Target.CreationPolicy == CreatePolicyNone) {
-		errs = errors.Join(errs, fmt.Errorf("deletionPolicy=Delete must not be used when the controller doesn't own the secret. Please set creationPolicy=Owner"))
-	}
-
-	if es.Spec.Target.DeletionPolicy == DeletionPolicyMerge && es.Spec.Target.CreationPolicy == CreatePolicyNone {
-		errs = errors.Join(errs, fmt.Errorf("deletionPolicy=Merge must not be used with creationPolicy=None. There is no Secret to merge with"))
+	if err := validatePolicies(es); err != nil {
+		errs = errors.Join(errs, err)
 	}
 
 	if len(es.Spec.Data) == 0 && len(es.Spec.DataFrom) == 0 {
-		errs = errors.Join(errs, fmt.Errorf("either data or dataFrom should be specified"))
+		errs = errors.Join(errs, errors.New("either data or dataFrom should be specified"))
+	}
+
+	if err := validatePrivilegedTemplate(es); err != nil {
+		errs = errors.Join(errs, err)
+	}
+	if err := validateSecretTemplateFromTargets(es.Spec.Target.Template); err != nil {
+		errs = errors.Join(errs, err)
 	}
 
 	for _, ref := range es.Spec.DataFrom {
-		findOrExtract := ref.Find != nil || ref.Extract != nil
-		if findOrExtract && ref.SourceRef != nil && ref.SourceRef.GeneratorRef != nil {
-			errs = errors.Join(errs, fmt.Errorf("generator can not be used with find or extract"))
+		if err := validateExtractFindGenerator(ref); err != nil {
+			errs = errors.Join(errs, err)
+		}
+
+		if err := validateFindExtractSourceRef(ref); err != nil {
+			errs = errors.Join(errs, err)
+		}
+
+		if err := validateSourceRef(ref); err != nil {
+			errs = errors.Join(errs, err)
 		}
 	}
 
 	errs = validateDuplicateKeys(es, errs)
 	return nil, errs
+}
+
+func validateSourceRef(ref ExternalSecretDataFromRemoteRef) error {
+	if ref.SourceRef != nil && ref.SourceRef.GeneratorRef == nil && ref.SourceRef.SecretStoreRef == nil {
+		return errors.New("generatorRef or storeRef must be set when using sourceRef in dataFrom")
+	}
+
+	return nil
+}
+
+func validateFindExtractSourceRef(ref ExternalSecretDataFromRemoteRef) error {
+	if ref.Find == nil && ref.Extract == nil && ref.SourceRef == nil {
+		return errors.New("either extract, find, or sourceRef must be set to dataFrom")
+	}
+
+	return nil
+}
+
+func validateExtractFindGenerator(ref ExternalSecretDataFromRemoteRef) error {
+	generatorRef := ref.SourceRef != nil && ref.SourceRef.GeneratorRef != nil
+	if (ref.Find != nil && (ref.Extract != nil || generatorRef)) || (ref.Extract != nil && (ref.Find != nil || generatorRef)) || (generatorRef && (ref.Find != nil || ref.Extract != nil)) {
+		return errors.New("extract, find, or generatorRef cannot be set at the same time")
+	}
+
+	return nil
+}
+
+func validatePolicies(es *ExternalSecret) error {
+	var errs error
+	if (es.Spec.Target.DeletionPolicy == DeletionPolicyDelete && es.Spec.Target.CreationPolicy == CreatePolicyMerge) ||
+		(es.Spec.Target.DeletionPolicy == DeletionPolicyDelete && es.Spec.Target.CreationPolicy == CreatePolicyNone) {
+		errs = errors.Join(errs, errors.New("deletionPolicy=Delete must not be used when the controller doesn't own the secret. Please set creationPolicy=Owner"))
+	}
+
+	if es.Spec.Target.DeletionPolicy == DeletionPolicyMerge && es.Spec.Target.CreationPolicy == CreatePolicyNone {
+		errs = errors.Join(errs, errors.New("deletionPolicy=Merge must not be used with creationPolicy=None. There is no Secret to merge with"))
+	}
+
+	return errs
+}
+
+// validatePrivilegedTemplate rejects templates with specific types and annotations combinations
+// to prevent users from creating long-lived tokens beyond the scope of the defined RBAC.
+func validatePrivilegedTemplate(es *ExternalSecret) error {
+	tpl := es.Spec.Target.Template
+	if tpl == nil {
+		return nil
+	}
+	//nolint:exhaustive // don't need exhaustive
+	switch tpl.Type {
+	case corev1.SecretTypeServiceAccountToken:
+		if _, ok := tpl.Metadata.Annotations[corev1.ServiceAccountNameKey]; ok {
+			return fmt.Errorf("template.type=%q with annotation %q is not allowed", corev1.SecretTypeServiceAccountToken, corev1.ServiceAccountNameKey)
+		}
+		for _, tf := range tpl.TemplateFrom {
+			if strings.EqualFold(string(tf.Target), string(TemplateTargetAnnotations)) {
+				return fmt.Errorf("template.type=%q with templateFrom target=%q is not allowed", corev1.SecretTypeServiceAccountToken, TemplateTargetAnnotations)
+			}
+		}
+	case corev1.SecretTypeBootstrapToken:
+		return fmt.Errorf("template.type=%q is not allowed", corev1.SecretTypeBootstrapToken)
+	}
+	return nil
+}
+
+func validateSecretTemplateFromTargets(tpl *ExternalSecretTemplate) error {
+	if tpl == nil {
+		return nil
+	}
+
+	var errs error
+	for _, tf := range tpl.TemplateFrom {
+		switch {
+		case tf.Target == "",
+			strings.EqualFold(string(tf.Target), string(TemplateTargetData)),
+			strings.EqualFold(string(tf.Target), string(TemplateTargetAnnotations)),
+			strings.EqualFold(string(tf.Target), string(TemplateTargetLabels)):
+			continue
+		}
+
+		errs = errors.Join(errs, fmt.Errorf(
+			"templateFrom target=%q is not allowed when targeting a Secret, must be one of %q, %q or %q",
+			tf.Target, TemplateTargetData, TemplateTargetAnnotations, TemplateTargetLabels))
+	}
+
+	return errs
 }
 
 func validateDuplicateKeys(es *ExternalSecret, errs error) error {
